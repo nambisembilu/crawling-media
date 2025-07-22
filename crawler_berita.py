@@ -278,55 +278,90 @@ def search_for_urls_from_keyword(keyword, num_results=5):
         response.raise_for_status() 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # === PERBAIKAN UTAMA DI SINI ===
-        # Strategi baru: Cari semua elemen 'article' yang umumnya membungkus item berita.
-        # Kemudian di dalam setiap 'article', cari tag 'a' yang merupakan link utama ke berita.
+        # === BAGIAN INI YANG PERLU DIUBAH BERDASARKAN INSPEKSI MANUAL ANDA ===
+        # Contoh hipotesis baru (Anda harus menyesuaikannya!):
+        # Asumsi: Setiap kartu artikel mungkin sekarang dibungkus oleh div dengan class tertentu,
+        # dan link artikel ada di dalam h3 di dalamnya.
+
+        # Paling umum, link artikel ada di dalam <a> dengan atribut href yang relatif
+        # Atau <a> dengan class tertentu
         
-        articles = soup.find_all('article')
-        if not articles:
-            st.warning("Tidak menemukan tag <article> di halaman Google News. Struktur mungkin sangat berubah.")
-
-        for article in articles:
-            # Coba cari link utama di dalam tag <a> dengan pola tertentu, atau yang merupakan heading
-            # Google News sering menggunakan <a class="DY5T1d" ...>
-            link_tag = article.find('a', class_=re.compile(r'DY5T1d|JtKR7c|Wwrf6b')) # Menambahkan beberapa class umum
+        # Contoh 1: Mencari <a> yang href-nya dimulai dengan "./articles/" (pola umum Google News)
+        # Seringkali, ini adalah yang paling stabil.
+        for link in soup.find_all('a', href=re.compile(r'^\./articles/')):
+            relative_url = link.get('href')
+            full_url = urllib.parse.urljoin("https://news.google.com/", relative_url)
             
-            if not link_tag: # Jika tidak ditemukan dengan class spesifik, coba cari link utama di h3
-                h3_tag = article.find('h3')
-                if h3_tag:
-                    link_tag = h3_tag.find('a', href=True)
+            if full_url.startswith('http'):
+                for domain in supported_domains:
+                    if domain in full_url:
+                        if full_url not in found_urls: 
+                            found_urls.append(full_url)
+                        break 
+            if len(found_urls) >= num_results:
+                break
+        
+        # Contoh 2: Jika Contoh 1 tidak bekerja, coba cari elemen lain yang membungkus judul link.
+        # Misalnya, jika judulnya ada di h3, dan linknya di dalamnya:
+        if len(found_urls) < num_results:
+            for h3_tag in soup.find_all('h3'):
+                link_tag = h3_tag.find('a', href=True)
+                if link_tag:
+                    potential_url = link_tag.get('href')
+                    if potential_url:
+                        # Convert relative URL to absolute URL
+                        if potential_url.startswith('./articles/'):
+                            full_url = urllib.parse.urljoin("https://news.google.com/", potential_url)
+                        elif potential_url.startswith('http'): # Already absolute
+                            full_url = potential_url
+                        else: # Not a valid URL pattern we expect
+                            continue
 
-            if link_tag:
-                relative_url = link_tag.get('href')
-                if relative_url:
-                    full_url = urllib.parse.urljoin("https://news.google.com/", relative_url)
-                    
-                    # Pastikan URL adalah link absolut dan berasal dari domain yang didukung
-                    if full_url.startswith('http'):
                         for domain in supported_domains:
                             if domain in full_url:
                                 if full_url not in found_urls: 
                                     found_urls.append(full_url)
-                                break # Keluar dari loop domain jika sudah cocok
+                                break
+                        if len(found_urls) >= num_results:
+                            break
+        
+        # Contoh 3 (JIKA KEDUA DI ATAS GAGAL): Coba cari <a> dengan class spesifik dari inspeksi Anda.
+        # GANTILAH 'CLASS_YANG_ANDA_TEMUKAN_DI_INSPEKSI' dengan nama kelas yang Anda temukan
+        # if len(found_urls) < num_results:
+        #     for link in soup.find_all('a', class_='CLASS_YANG_ANDA_TEMUKAN_DI_INSPEKSI'):
+        #         potential_url = link.get('href')
+        #         if potential_url:
+        #             if potential_url.startswith('./articles/'):
+        #                 full_url = urllib.parse.urljoin("https://news.google.com/", potential_url)
+        #             elif potential_url.startswith('http'):
+        #                 full_url = potential_url
+        #             else:
+        #                 continue
                     
-                    if len(found_urls) >= num_results:
-                        break # Hentikan jika sudah mencapai jumlah hasil yang diinginkan
+        #             for domain in supported_domains:
+        #                 if domain in full_url:
+        #                     if full_url not in found_urls:
+        #                         found_urls.append(full_url)
+        #                     break
+        #             if len(found_urls) >= num_results:
+        #                 break
+
 
     except requests.exceptions.RequestException as e:
         status_code = response.status_code if 'response' in locals() else 'N/A'
         st.error(f"Error saat mencari URL di Google News (Status: {status_code}): {e}. Periksa koneksi internet Anda, coba lagi nanti, atau IP Anda mungkin diblokir.")
     except Exception as e:
-        st.error(f"Terjadi kesalahan tidak terduga saat parsing hasil pencarian Google News: {e}. Coba periksa struktur HTML Google News secara manual.")
+        st.error(f"Terjadi kesalahan tidak terduga saat parsing hasil pencarian Google News: {e}. **Sangat disarankan untuk memeriksa struktur HTML Google News secara manual.**")
 
     unique_urls = list(dict.fromkeys(found_urls)) 
     
     if not unique_urls:
         st.warning(f"""
-        Tidak ada URL yang ditemukan dari situs berita yang didukung untuk kata kunci **'{keyword}'**.
+        **Peringatan Penting:** Tidak ada URL yang ditemukan dari situs berita yang didukung untuk kata kunci **'{keyword}'**.
         Ini mungkin karena:
-        * **Tidak ada artikel relevan** dari situs yang didukung muncul di Google News untuk kata kunci ini.
-        * **Struktur HTML Google News telah berubah lagi** (perlu update kode `search_for_urls_from_keyword` dengan selektor yang baru).
-        * **Permintaan Anda mungkin diblokir sementara oleh Google** karena aktivitas scraping.
+        * Tidak ada artikel yang sangat relevan dari situs yang didukung muncul di Google News.
+        * **Struktur HTML Google News telah berubah signifikan lagi.** Kode **`search_for_urls_from_keyword`** perlu diperbarui dengan selektor yang baru yang Anda temukan dari **inspeksi manual**.
+        * Permintaan Anda mungkin diblokir sementara oleh Google karena aktivitas scraping yang terdeteksi.
         """)
         st.info("Saran: Coba kata kunci yang lebih umum (misal: 'ekonomi Indonesia', 'berita politik') atau kurangi jumlah artikel yang diminta.")
     
