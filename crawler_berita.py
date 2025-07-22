@@ -174,7 +174,8 @@ if run:
     serpapi_links, error = fetch_links_serpapi(keyword, jumlah)
     if error:
         st.warning(f"⚠️ SerpApi error: {error}")
-        st.stop()
+        serpapi_links = []  # lanjutkan tanpa data SerpApi
+
     st.success(f"✅ {len(serpapi_links)} artikel dari SerpApi")
     df_serp = pd.DataFrame(serpapi_links)
     st.dataframe(df_serp)
