@@ -2,217 +2,351 @@ import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
+import re
+from datetime import datetime
+import time
 from io import BytesIO
-import datetime
-import urllib.parse
 
-# ---------------------------
-# KONFIGURASI API SERPAPI
-# ---------------------------
-SERPAPI_KEY = 'ISI_API_KEY_SERPAPI_ANDA'  # Ganti dengan API key asli dari https://serpapi.com/
-
-# Validasi API Key
-if not SERPAPI_KEY.strip():
-    st.error("❌ Anda belum mengisi API Key SerpApi. Daftar di https://serpapi.com/")
-
-# ---------------------------
-# KONFIGURASI STREAMLIT
-# ---------------------------
-st.set_page_config(page_title="Crawler Berita 🇮🇩", layout="wide")
-st.markdown("""
-<div style="padding: 1rem; background: #1f2937; color: white; border-radius: 0.5rem; margin-bottom: 2rem;">
-  <h1 style="font-size: 2rem; font-weight: bold;">📰 Crawler Berita Indonesia</h1>
-  <p style="margin: 0.5rem 0 0;">Menggabungkan SerpApi dan crawling manual dari situs berita populer.</p>
-</div>
-""", unsafe_allow_html=True)
-
-# ---------------------------
-# INPUT FORM
-# ---------------------------
-with st.container():
-    col1, col2, col3 = st.columns([3, 1, 1])
-    with col1:
-        keyword = st.text_input("🔎 Kata Kunci", placeholder="misalnya: ekonomi pangan", value="")
-    with col2:
-        jumlah = st.number_input("🔢 Maks Artikel SerpApi", min_value=1, max_value=100, value=20)
-    with col3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        run = st.button("🚀 Jalankan", use_container_width=True)
-
-# ---------------------------
-# FUNGSI: FETCH DARI SERPAPI
-# ---------------------------
-def fetch_links_serpapi(query, max_results=20):
-    q = urllib.parse.quote(query)
-    url = f"https://serpapi.com/search.json?q={q}&api_key={SERPAPI_KEY}&num={max_results}&hl=id&gl=id"
-    r = requests.get(url)
-    if r.status_code != 200:
-        return [], f"Status {r.status_code} – {r.text}"
-    data = r.json()
-    organic = data.get("organic_results", [])
-    links = []
-    for item in organic:
-        link = item.get("link")
-        title = item.get("title")
-        if link and title and any(site in link for site in [
-            "cnnindonesia.com", "kompas.com", "liputan6.com", "tempo.co",
-            "antaranews.com", "republika.co.id", "viva.co.id"
-        ]):
-            links.append({"title": title, "url": link})
-    return links, None
-
-# ---------------------------
-# FUNGSI: CRAWLING MANUAL
-# ---------------------------
-def crawl_cnn(keyword):
-    url = f"https://www.cnnindonesia.com/search/?query={keyword.replace(' ', '+')}"
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(r.text, "html.parser")
-    articles = []
-    for a in soup.select("article h2 a"):
-        title = a.get_text(strip=True)
-        link = a.get("href")
-        if link and not link.startswith("http"):
-            link = "https:" + link
-        articles.append({"title": title, "url": link})
-    return articles
-
-def crawl_kompas(keyword):
-    url = f"https://www.kompas.com/tag/{keyword.replace(' ', '-')}/"
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(r.text, "html.parser")
-    return [{"title": a.get_text(strip=True), "url": a.get("href")} 
-            for a in soup.select(".latest .article__list__title a")]
-
-def crawl_liputan6(keyword):
-    url = f"https://www.liputan6.com/tag/{keyword.replace(' ', '-')}"
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(r.text, "html.parser")
-    return [{"title": a.get_text(strip=True), "url": a.get("href")} 
-            for a in soup.select("div.articles--rows--item__desc a.articles--rows--item__title-link")]
-
-def crawl_tempo(keyword):
-    url = f"https://www.tempo.co/search?q={keyword.replace(' ', '+')}"
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(r.text, "html.parser")
-    articles = []
-    for div in soup.select("div.card.card-type-1"):
-        a = div.find("a")
-        if a:
-            articles.append({"title": a.get_text(strip=True), "url": a.get("href")})
-    return articles
-
-def crawl_antaranews(keyword):
-    url = f"https://www.antaranews.com/search?q={keyword.replace(' ', '+')}"
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(r.text, "html.parser")
-    articles = []
-    for h3 in soup.select("h3"):
-        a = h3.find("a")
-        if a:
-            articles.append({"title": a.get_text(strip=True), "url": a.get("href")})
-    return articles
-
-def crawl_republika(keyword):
-    url = f"https://www.republika.co.id/tag/{keyword.replace(' ', '-')}"
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(r.text, "html.parser")
-    return [{"title": a.get_text(strip=True), "url": a.get("href")} 
-            for a in soup.select("div.teaser_conten1 > h2 > a")]
-
-def crawl_viva(keyword):
-    url = f"https://www.viva.co.id/search?q={keyword.replace(' ', '+')}"
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(r.text, "html.parser")
-    articles = []
-    for a in soup.select("div.content a"):
-        title = a.get_text(strip=True)
-        link = a.get("href")
-        if title and link:
-            articles.append({"title": title, "url": link})
-    return articles
-
-def crawl_all_manual(keyword):
-    articles = []
+# --- Fungsi Crawler Artikel (Tidak Berubah Signifikan) ---
+def get_detik_article(url):
     try:
-        articles += crawl_cnn(keyword)
-        articles += crawl_kompas(keyword)
-        articles += crawl_liputan6(keyword)
-        articles += crawl_tempo(keyword)
-        articles += crawl_antaranews(keyword)
-        articles += crawl_republika(keyword)
-        articles += crawl_viva(keyword)
+        response = requests.get(url)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        title_tag = soup.find('h1', class_='detail__title')
+        title = title_tag.get_text(strip=True) if title_tag else 'N/A'
+
+        date_tag = soup.find('div', class_='detail__date')
+        date_text = date_tag.get_text(strip=True) if date_tag else 'N/A'
+        match = re.search(r'(\d{1,2} \w{3} \d{4} \d{2}:\d{2})', date_text)
+        if match:
+            date_str = match.group(1)
+            month_map = {
+                'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'Mei': '05', 'Jun': '06',
+                'Jul': '07', 'Agu': '08', 'Sep': '09', 'Okt': '10', 'Nov': '11', 'Des': '12'
+            }
+            for abbr, num in month_map.items():
+                date_str = date_str.replace(abbr, num)
+            try:
+                parsed_date = datetime.strptime(date_str, '%d %m %Y %H:%M')
+                date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                date = date_text
+        else:
+            date = date_text
+
+        content_div = soup.find('div', class_='detail__body-text')
+        paragraphs = content_div.find_all('p') if content_div else []
+        content = "\n".join([p.get_text(strip=True) for p in paragraphs])
+        content = re.sub(r'Baca juga:.*', '', content, flags=re.DOTALL)
+        content = re.sub(r'Simak Video.*', '', content, flags=re.DOTALL)
+        content = content.strip()
+
+        return {'url': url, 'title': title, 'date': date, 'content': content}
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error accessing URL {url}: {e}")
+        return None
     except Exception as e:
-        st.warning(f"⚠️ Error crawling manual: {e}")
-    return articles
-
-# ---------------------------
-# FUNGSI: PARSE KONTEN ARTIKEL
-# ---------------------------
-def parse_news_content(url):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
-        title = (soup.find("h1").get_text(strip=True) 
-                 if soup.find("h1") else (soup.title.get_text(strip=True) if soup.title else "Tanpa Judul"))
-        content = " ".join(p.get_text(strip=True) for p in soup.find_all("p"))
-        return {"title": title, "url": url, "content": content}
-    except:
+        st.error(f"Error parsing Detik article {url}: {e}")
         return None
 
-# ---------------------------
-# EKSEKUSI UTAMA
-# ---------------------------
-if run:
-    if not keyword.strip():
-        st.warning("⚠️ Silakan masukkan kata kunci terlebih dahulu.")
-        st.stop()
+def get_kompas_article(url):
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-    # 1. SerpApi
-    st.info("🔍 Mengambil dari SerpApi...")
-    serpapi_links, error = fetch_links_serpapi(keyword, jumlah)
-    if error:
-        st.warning(f"⚠️ SerpApi error: {error}")
-        serpapi_links = []  # lanjutkan tanpa data SerpApi
+        title_tag = soup.find('h1', class_='read__title')
+        title = title_tag.get_text(strip=True) if title_tag else 'N/A'
 
-    st.success(f"✅ {len(serpapi_links)} artikel dari SerpApi")
-    df_serp = pd.DataFrame(serpapi_links)
-    st.dataframe(df_serp)
+        date_tag = soup.find('div', class_='read__time')
+        date_text = date_tag.get_text(strip=True) if date_tag else 'N/A'
+        match = re.search(r'(\d{2}/\d{2}/\d{4}, \d{2}:\d{2})', date_text)
+        if match:
+            date_str = match.group(1)
+            try:
+                parsed_date = datetime.strptime(date_str, '%d/%m/%Y, %H:%M')
+                date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                date = date_text
+        else:
+            date = date_text
 
-    # 2. Manual Crawling
-    st.info("📡 Mengambil manual crawling...")
-    manual_links = crawl_all_manual(keyword)
-    st.success(f"✅ {len(manual_links)} artikel dari crawling manual")
-    df_manual = pd.DataFrame(manual_links)
-    st.dataframe(df_manual)
+        content_div = soup.find('div', class_='read__content')
+        paragraphs = content_div.find_all('p') if content_div else []
+        content = "\n".join([p.get_text(strip=True) for p in paragraphs])
+        content = re.sub(r'Baca juga:.*', '', content, flags=re.DOTALL)
+        content = re.sub(r'Baca Juga.*', '', content, flags=re.DOTALL)
+        content = re.sub(r'Simak juga.*', '', content, flags=re.DOTALL)
+        content = re.sub(r'Pilihan Editor.*', '', content, flags=re.DOTALL)
+        content = content.strip()
 
-    # 3. Gabungkan
-    st.info("🔗 Menggabungkan hasil...")
-    combined = serpapi_links + manual_links
-    df_combined = pd.DataFrame(combined)
-    st.markdown("### 📑 Daftar Semua Artikel (SerpApi + Manual)")
-    st.dataframe(df_combined)
+        return {'url': url, 'title': title, 'date': date, 'content': content}
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error accessing URL {url}: {e}")
+        return None
+    except Exception as e:
+        st.error(f"Error parsing Kompas article {url}: {e}")
+        return None
 
-    # 4. Parsing Konten
-    st.info("🧠 Parsing isi konten artikel...")
-    parsed = []
-    for item in combined:
-        result = parse_news_content(item["url"])
-        if result:
-            parsed.append(result)
-    st.success(f"✅ {len(parsed)} artikel berhasil diparse")
-    df_parsed = pd.DataFrame(parsed)
-    st.dataframe(df_parsed)
+def get_sindonews_article(url):
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-    # 5. Export to Excel
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_parsed.to_excel(writer, index=False, sheet_name="Berita")
-    output.seek(0)
-    st.download_button(
-        label="⬇️ Download Excel",
-        data=output,
-        file_name=f'berita_{keyword}_{datetime.date.today()}.xlsx',
-        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
+        title_tag = soup.find('h1', class_='title')
+        title = title_tag.get_text(strip=True) if title_tag else 'N/A'
+
+        date_tag = soup.find('time', class_='time')
+        date_text = date_tag.get_text(strip=True) if date_tag else 'N/A'
+        match = re.search(r'(\d{1,2} \w+ \d{4} - \d{2}:\d{2})', date_text)
+        if match:
+            date_str = match.group(1)
+            month_map = {
+                'Januari': '01', 'Februari': '02', 'Maret': '03', 'April': '04', 'Mei': '05', 'Juni': '06',
+                'Juli': '07', 'Agustus': '08', 'September': '09', 'Oktober': '10', 'November': '11', 'Desember': '12'
+            }
+            for full, num in month_map.items():
+                date_str = date_str.replace(full, num)
+            try:
+                parsed_date = datetime.strptime(date_str, '%d %m %Y - %H:%M')
+                date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                date = date_text
+        else:
+            date = date_text
+
+        content_div = soup.find('div', class_='desc')
+        paragraphs = content_div.find_all('p') if content_div else []
+        content = "\n".join([p.get_text(strip=True) for p in paragraphs])
+        content = re.sub(r'Lihat juga:.*', '', content, flags=re.DOTALL)
+        content = re.sub(r'Jangan Lewatkan!.*', '', content, flags=re.DOTALL)
+        content = content.strip()
+
+        return {'url': url, 'title': title, 'date': date, 'content': content}
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error accessing URL {url}: {e}")
+        return None
+    except Exception as e:
+        st.error(f"Error parsing SindoNews article {url}: {e}")
+        return None
+
+def get_liputan6_article(url):
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        title_tag = soup.find('h1', class_='jdl')
+        title = title_tag.get_text(strip=True) if title_tag else 'N/A'
+
+        date_tag = soup.find('time', class_='read-info__date')
+        date_text = date_tag.get_text(strip=True) if date_tag else 'N/A'
+        match = re.search(r'(\d{1,2} \w{3} \d{4}, \d{2}:\d{2})', date_text)
+        if match:
+            date_str = match.group(1)
+            month_map = {
+                'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'Mei': '05', 'Jun': '06',
+                'Jul': '07', 'Agu': '08', 'Sep': '09', 'Okt': '10', 'Nov': '11', 'Des': '12'
+            }
+            for abbr, num in month_map.items():
+                date_str = date_str.replace(abbr, num)
+            try:
+                parsed_date = datetime.strptime(date_str, '%d %m %Y, %H:%M')
+                date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                date = date_text
+        else:
+            date = date_text
+
+        content_div = soup.find('div', class_='article-content-body__item-content')
+        paragraphs = content_div.find_all('p') if content_div else []
+        content = "\n".join([p.get_text(strip=True) for p in paragraphs])
+        content = re.sub(r'Baca Juga.*', '', content, flags=re.DOTALL)
+        content = re.sub(r'Simak berita Liputan6.com lainnya.*', '', content, flags=re.DOTALL)
+        content = content.strip()
+
+        return {'url': url, 'title': title, 'date': date, 'content': content}
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error accessing URL {url}: {e}")
+        return None
+    except Exception as e:
+        st.error(f"Error parsing Liputan6 article {url}: {e}")
+        return None
+
+def get_cnn_article(url):
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        title_tag = soup.find('h1', class_='detail_title')
+        title = title_tag.get_text(strip=True) if title_tag else 'N/A'
+
+        date_tag = soup.find('div', class_='detail_date')
+        date_text = date_tag.get_text(strip=True) if date_tag else 'N/A'
+        match = re.search(r'(\d{1,2} \w{3} \d{4} \d{2}:\d{2})', date_text)
+        if match:
+            date_str = match.group(1)
+            month_map = {
+                'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'Mei': '05', 'Jun': '06',
+                'Jul': '07', 'Agu': '08', 'Sep': '09', 'Okt': '10', 'Nov': '11', 'Des': '12'
+            }
+            for abbr, num in month_map.items():
+                date_str = date_str.replace(abbr, num)
+            try:
+                parsed_date = datetime.strptime(date_str, '%d %m %Y %H:%M')
+                date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                date = date_text
+        else:
+            date = date_text
+
+        content_div = soup.find('div', class_='detail_text')
+        paragraphs = content_div.find_all('p') if content_div else []
+        content = "\n".join([p.get_text(strip=True) for p in paragraphs])
+        content = re.sub(r'Baca berita selengkapnya di CNNIndonesia.com', '', content, flags=re.DOTALL)
+        content = re.sub(r'Lihat Juga:.*', '', content, flags=re.DOTALL)
+        content = content.strip()
+
+        return {'url': url, 'title': title, 'date': date, 'content': content}
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error accessing URL {url}: {e}")
+        return None
+    except Exception as e:
+        st.error(f"Error parsing CNN Indonesia article {url}: {e}")
+        return None
+
+# --- Fungsi Crawler Utama (Tidak Berubah) ---
+def crawl_articles(urls):
+    results = []
+    if not urls:
+        return pd.DataFrame(results) # Return empty DataFrame if no URLs
+    
+    progress_bar = st.progress(0)
+    for i, url in enumerate(urls):
+        st.info(f"Mengambil artikel dari: {url}")
+        article_data = None
+        if "detik.com" in url:
+            article_data = get_detik_article(url)
+        elif "kompas.com" in url:
+            article_data = get_kompas_article(url)
+        elif "sindonews.com" in url:
+            article_data = get_sindonews_article(url)
+        elif "liputan6.com" in url:
+            article_data = get_liputan6_article(url)
+        elif "cnnindonesia.com" in url:
+            article_data = get_cnn_article(url)
+        else:
+            st.warning(f"URL tidak dikenali atau tidak didukung untuk crawling: {url}")
+
+        if article_data:
+            results.append(article_data)
+        progress_bar.progress((i + 1) / len(urls))
+        time.sleep(0.1)
+    return pd.DataFrame(results)
+
+# --- Fungsionalitas Pencarian (BARU) ---
+def search_for_urls_from_keyword(keyword, num_results=5):
+    """
+    Fungsi placeholder untuk mencari URL berdasarkan kata kunci.
+    Dalam implementasi nyata, ini akan berinteraksi dengan API pencarian
+    (misal: Google Custom Search, Google News API) atau melakukan scraping
+    halaman hasil pencarian (lebih kompleks dan berisiko diblokir).
+
+    Untuk demo ini, kita akan mengembalikan URL dummy.
+    """
+    st.info(f"Mencari URL untuk keyword: '{keyword}'...")
+    
+    # List domain yang didukung
+    supported_domains = [
+        "detik.com", "kompas.com", "sindonews.com", "liputan6.com", "cnnindonesia.com"
+    ]
+    
+    found_urls = []
+    
+    # --- Contoh placeholder: Asumsikan Anda mendapatkan URL ini dari pencarian ---
+    # Di dunia nyata, Anda akan menggunakan library seperti 'requests' dan 'BeautifulSoup'
+    # untuk mengikis hasil pencarian Google News atau situs berita.
+    # Atau lebih baik lagi, gunakan API pencarian jika tersedia.
+
+    # Dummy URLs untuk demonstrasi. Anda perlu menggantinya dengan logika pencarian sungguhan.
+    dummy_urls = [
+        "https://news.detik.com/berita/d-7451361/laba-bersih-bank-mandiri-rp-40-6-t-di-kuartal-ii-2024-meroket-21-3",
+        "https://ekonomi.kompas.com/read/2024/07/22/170000026/menteri-prpr-targetkan-tol-getaci-bagian-cileunyi-garut-rampung-2026",
+        "https://nasional.sindonews.com/read/1420239/15/prabowo-gelar-rapat-internal-bersama-jajaran-gerindra-di-kemenhan-1721644788",
+        "https://www.liputan6.com/bisnis/read/5651111/harga-minyak-mentah-turun-dipicu-kekhawatiran-permintaan-dan-penguatan-dolar-as",
+        "https://www.cnnindonesia.com/ekonomi/20240722165507-92-1160358/rupiah-menguat-ke-rp-16-390-us-dibalik-lonjakan-laba-mandiri",
+        # Tambahkan lebih banyak URL dummy atau implementasi pencarian sungguhan di sini
+        # Contoh URL yang tidak didukung untuk demonstrasi:
+        "https://www.google.com/search?q=dummy", 
+        "https://www.facebook.com/posts/dummy"
+    ]
+
+    for url in dummy_urls:
+        if any(domain in url for domain in supported_domains):
+            found_urls.append(url)
+            if len(found_urls) >= num_results: # Batasi jumlah hasil
+                break
+    
+    if not found_urls:
+        st.warning(f"Tidak ada URL yang ditemukan dari situs berita yang didukung untuk keyword '{keyword}'.")
+
+    return found_urls
+
+# --- Konfigurasi Streamlit UI (Berubah) ---
+st.set_page_config(layout="wide", page_title="Crawler Artikel Berita Indonesia")
+
+st.title("🇮🇩 Crawler Artikel Berita Indonesia")
+st.write("Aplikasi ini memungkinkan Anda untuk mencari artikel berita berdasarkan kata kunci dan meng-crawl judul, tanggal, dan isinya dari beberapa situs berita populer di Indonesia.")
+
+st.subheader("Masukkan Kata Kunci")
+keyword_input = st.text_input(
+    "Masukkan kata kunci untuk mencari artikel berita:",
+    help="Contoh: 'Bank Mandiri', 'Rupiah', 'Harga Minyak'"
+)
+
+num_articles_to_crawl = st.slider(
+    "Jumlah artikel yang ingin di-crawl per kata kunci (maksimal 10 untuk demo):",
+    min_value=1,
+    max_value=10, # Batasi untuk menghindari terlalu banyak crawling
+    value=5
+)
+
+if st.button("Cari dan Mulai Crawling"):
+    if not keyword_input:
+        st.warning("Mohon masukkan kata kunci.")
+    else:
+        # 1. Cari URL berdasarkan kata kunci
+        urls_to_crawl = search_for_urls_from_keyword(keyword_input, num_articles_to_crawl)
+        
+        if urls_to_crawl:
+            st.success(f"Ditemukan {len(urls_to_crawl)} URL yang relevan. Memulai crawling...")
+            # 2. Lakukan crawling pada URL yang ditemukan
+            df_articles = crawl_articles(urls_to_crawl)
+
+            if not df_articles.empty:
+                st.subheader("Hasil Crawling")
+                st.dataframe(df_articles)
+
+                # Bagian untuk ekspor ke XLSX
+                excel_buffer = BytesIO()
+                df_articles.to_excel(excel_buffer, index=False, engine='openpyxl')
+                excel_buffer.seek(0)
+
+                st.download_button(
+                    label="Unduh Data sebagai XLSX",
+                    data=excel_buffer,
+                    file_name=f"{keyword_input.replace(' ', '_')}_artikel_berita.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            else:
+                st.warning("Tidak ada artikel yang berhasil di-crawl dari URL yang ditemukan.")
+        else:
+            st.warning("Tidak ada URL yang ditemukan untuk kata kunci tersebut dari situs berita yang didukung.")
+
+st.markdown("---")
+st.markdown("Dikembangkan dengan ❤️ oleh [Nama Anda/Komunitas Anda]")
+st.markdown("**Catatan:** Fungsi pencarian URL saat ini adalah *placeholder* dan hanya mengembalikan URL contoh. Untuk implementasi sungguhan, Anda perlu menambahkan logika pencarian (misalnya, menggunakan Google News API atau scraping hasil pencarian).")
