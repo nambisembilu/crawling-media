@@ -40,7 +40,7 @@ def fetch_from_newsdata(keyword, max_pages=5):
         url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=id&language=id&q={keyword}&page={page}"
         response = requests.get(url)
         if response.status_code != 200:
-            break
+            return all_articles, f"Status code {response.status_code}"
         data = response.json()
         results = data.get("results", [])
         if not results:
@@ -59,10 +59,14 @@ def fetch_links_duckduckgo(keyword):
     query = f"{keyword} site:cnnindonesia.com OR site:kompas.com"
     url = f"https://html.duckduckgo.com/html/?q={query}"
     headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.get(url, headers=headers)
-    soup = BeautifulSoup(r.text, "html.parser")
-    links = [a["href"] for a in soup.select(".result__a")]
-    return links
+    try:
+        r = requests.get(url, headers=headers)
+        soup = BeautifulSoup(r.text, "html.parser")
+        links = [a["href"] for a in soup.select(".result__a")]
+        return links
+    except Exception as e:
+        st.warning(f"❌ Error DuckDuckGo: {e}")
+        return []
 
 def parse_news_content(url):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -86,32 +90,37 @@ def parse_news_content(url):
 # EKSEKUSI UTAMA
 # ---------------------------
 if run and keyword:
-    # 1. Dari API NewsData.io
+    # 1. Ambil dari API NewsData.io
     st.info("📡 Mengambil data dari NewsData.io...")
     newsdata_articles, error = fetch_from_newsdata(keyword, max_pages=max_pages)
     if error:
-        st.warning(error)
-    df_newsdata = pd.DataFrame(newsdata_articles)
-    st.success(f"✅ {len(df_newsdata)} artikel ditemukan dari NewsData.io")
+        st.warning(f"⚠️ ERROR NewsData.io: {error}")
+    else:
+        st.success(f"✅ {len(newsdata_articles)} artikel ditemukan dari NewsData.io")
+        st.dataframe(pd.DataFrame(newsdata_articles).head())
 
-    # 2. Fallback DuckDuckGo
+    # 2. Ambil link dari DuckDuckGo
     st.info("🌐 Mengambil link dari DuckDuckGo...")
     links = fetch_links_duckduckgo(keyword)
-    st.write(f"🔗 {len(links)} link ditemukan dari CNN/Kompas")
+    st.write(f"🔗 {len(links)} link ditemukan dari DuckDuckGo")
+    if not links:
+        st.warning("⚠️ DuckDuckGo tidak mengembalikan hasil.")
 
     # 3. Parse konten dari CNN/Kompas
-    st.info("🧠 Mengambil konten artikel dari masing-masing link...")
+    st.info("🧠 Parsing artikel dari CNN & Kompas...")
     parsed_articles = []
     for link in links:
         parsed = parse_news_content(link)
         if parsed:
             parsed_articles.append(parsed)
-    df_parsed = pd.DataFrame(parsed_articles)
-    st.success(f"✅ {len(df_parsed)} artikel berhasil diparsing dari halaman asli")
+        else:
+            st.write(f"❌ Gagal parsing: {link}")
+    st.success(f"✅ {len(parsed_articles)} artikel berhasil di-parse.")
+    st.dataframe(pd.DataFrame(parsed_articles).head())
 
-    # 4. Gabungkan semua data
-    df_all = pd.concat([df_newsdata, df_parsed], ignore_index=True)
-    st.markdown("### 🗂️ Hasil Crawling Berita")
+    # 4. Gabungkan semua
+    df_all = pd.DataFrame(newsdata_articles + parsed_articles)
+    st.markdown("### 🗂️ Total Artikel")
     st.dataframe(df_all)
 
     # 5. Export ke Excel
