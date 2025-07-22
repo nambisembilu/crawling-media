@@ -13,7 +13,7 @@ NEWSDATA_API_KEY = 'pub_e1f8e0f44ae641dbbf8843c814329a1f'  # GANTI dengan API ke
 # ---------------------------
 # CEK API KEY
 # ---------------------------
-if NEWSDATA_API_KEY == 'pub_e1f8e0f44ae641dbbf8843c814329a1f' or not NEWSDATA_API_KEY.strip():
+if not NEWSDATA_API_KEY or not NEWSDATA_API_KEY.strip():
     st.error("❌ Anda belum mengisi API Key NewsData.io. Silakan daftarkan akun di https://newsdata.io/register")
     st.stop()
 
