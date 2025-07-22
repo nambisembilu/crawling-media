@@ -10,7 +10,7 @@ from io import BytesIO
 # --- Fungsi Crawler Artikel (Tidak Berubah Signifikan) ---
 def get_detik_article(url):
     try:
-        response = requests.get(url)
+        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -53,7 +53,7 @@ def get_detik_article(url):
 
 def get_kompas_article(url):
     try:
-        response = requests.get(url)
+        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -92,7 +92,7 @@ def get_kompas_article(url):
 
 def get_sindonews_article(url):
     try:
-        response = requests.get(url)
+        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -135,7 +135,7 @@ def get_sindonews_article(url):
 
 def get_liputan6_article(url):
     try:
-        response = requests.get(url)
+        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -178,7 +178,7 @@ def get_liputan6_article(url):
 
 def get_cnn_article(url):
     try:
-        response = requests.get(url)
+        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -219,11 +219,11 @@ def get_cnn_article(url):
         st.error(f"Error parsing CNN Indonesia article {url}: {e}")
         return None
 
-# --- Fungsi Crawler Utama (Tidak Berubah) ---
+
 def crawl_articles(urls):
     results = []
     if not urls:
-        return pd.DataFrame(results) # Return empty DataFrame if no URLs
+        return pd.DataFrame(results)
     
     progress_bar = st.progress(0)
     for i, url in enumerate(urls):
@@ -245,58 +245,69 @@ def crawl_articles(urls):
         if article_data:
             results.append(article_data)
         progress_bar.progress((i + 1) / len(urls))
-        time.sleep(0.1)
+        time.sleep(1) # Perpanjang delay untuk lebih sopan ke website, terutama setelah scraping Google News
     return pd.DataFrame(results)
 
-# --- Fungsionalitas Pencarian (BARU) ---
+# --- Fungsionalitas Pencarian (BARU dan DITINGKATKAN) ---
 def search_for_urls_from_keyword(keyword, num_results=5):
     """
-    Fungsi placeholder untuk mencari URL berdasarkan kata kunci.
-    Dalam implementasi nyata, ini akan berinteraksi dengan API pencarian
-    (misal: Google Custom Search, Google News API) atau melakukan scraping
-    halaman hasil pencarian (lebih kompleks dan berisiko diblokir).
-
-    Untuk demo ini, kita akan mengembalikan URL dummy.
+    Melakukan pencarian di Google News untuk mendapatkan URL artikel berdasarkan kata kunci.
     """
-    st.info(f"Mencari URL untuk keyword: '{keyword}'...")
+    st.info(f"Mencari URL artikel di Google News untuk keyword: '{keyword}'...")
     
-    # List domain yang didukung
+    # List domain berita Indonesia yang didukung oleh crawler Anda
     supported_domains = [
         "detik.com", "kompas.com", "sindonews.com", "liputan6.com", "cnnindonesia.com"
     ]
     
+    # URL Google News dengan parameter pencarian dan bahasa Indonesia
+    search_url = f"https://news.google.com/search?q={keyword}&hl=id&gl=ID&ceid=ID:id"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    
     found_urls = []
-    
-    # --- Contoh placeholder: Asumsikan Anda mendapatkan URL ini dari pencarian ---
-    # Di dunia nyata, Anda akan menggunakan library seperti 'requests' dan 'BeautifulSoup'
-    # untuk mengikis hasil pencarian Google News atau situs berita.
-    # Atau lebih baik lagi, gunakan API pencarian jika tersedia.
+    try:
+        response = requests.get(search_url, headers=headers, timeout=10)
+        response.raise_for_status() # Cek jika ada error HTTP
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-    # Dummy URLs untuk demonstrasi. Anda perlu menggantinya dengan logika pencarian sungguhan.
-    dummy_urls = [
-        "https://news.detik.com/berita/d-7451361/laba-bersih-bank-mandiri-rp-40-6-t-di-kuartal-ii-2024-meroket-21-3",
-        "https://ekonomi.kompas.com/read/2024/07/22/170000026/menteri-prpr-targetkan-tol-getaci-bagian-cileunyi-garut-rampung-2026",
-        "https://nasional.sindonews.com/read/1420239/15/prabowo-gelar-rapat-internal-bersama-jajaran-gerindra-di-kemenhan-1721644788",
-        "https://www.liputan6.com/bisnis/read/5651111/harga-minyak-mentah-turun-dipicu-kekhawatiran-permintaan-dan-penguatan-dolar-as",
-        "https://www.cnnindonesia.com/ekonomi/20240722165507-92-1160358/rupiah-menguat-ke-rp-16-390-us-dibalik-lonjakan-laba-mandiri",
-        # Tambahkan lebih banyak URL dummy atau implementasi pencarian sungguhan di sini
-        # Contoh URL yang tidak didukung untuk demonstrasi:
-        "https://www.google.com/search?q=dummy", 
-        "https://www.facebook.com/posts/dummy"
-    ]
-
-    for url in dummy_urls:
-        if any(domain in url for domain in supported_domains):
-            found_urls.append(url)
-            if len(found_urls) >= num_results: # Batasi jumlah hasil
+        # Google News sering menempatkan link artikel di tag <a> dengan href yang relatif
+        # Cari semua link yang mengarah ke artikel berita
+        # Struktur Google News bisa berubah, jadi mungkin perlu penyesuaian di sini
+        # Contoh: link artikel ada di dalam 'a' dengan atribut 'href' yang dimulai dengan './articles/'
+        # Atau 'a' yang merupakan anak dari elemen tertentu (misalnya, div class="DY5T1d")
+        
+        # Pendekatan yang lebih robust: mencari semua link dan memfilter
+        for link in soup.find_all('a', href=True):
+            full_url = link.get('href')
+            
+            # Google News sering menggunakan URL relatif seperti './articles/...'
+            if full_url and full_url.startswith('./articles/'):
+                full_url = "https://news.google.com" + full_url[1:] # Ubah menjadi URL absolut
+            
+            # Hanya tambahkan jika itu URL absolut dan dari domain yang didukung
+            if full_url and full_url.startswith('http'):
+                for domain in supported_domains:
+                    if domain in full_url:
+                        found_urls.append(full_url)
+                        break # Hentikan loop domain jika sudah cocok
+            
+            if len(found_urls) >= num_results:
                 break
-    
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error saat mencari URL di Google News: {e}. Coba lagi nanti atau periksa koneksi internet.")
+    except Exception as e:
+        st.error(f"Terjadi kesalahan tidak terduga saat parsing hasil pencarian: {e}")
+
+    # Hapus duplikat dan pertahankan urutan
+    found_urls = list(dict.fromkeys(found_urls)) 
+
     if not found_urls:
-        st.warning(f"Tidak ada URL yang ditemukan dari situs berita yang didukung untuk keyword '{keyword}'.")
+        st.warning(f"Tidak ada URL yang ditemukan dari situs berita yang didukung untuk keyword '{keyword}'. Ini mungkin karena: \n- Tidak ada artikel relevan yang muncul di Google News.\n- Struktur Google News telah berubah (perlu update kode).\n- Permintaan Anda diblokir.")
+    
+    return found_urls[:num_results] # Pastikan hanya mengembalikan sejumlah yang diminta
 
-    return found_urls
-
-# --- Konfigurasi Streamlit UI (Berubah) ---
+# --- Konfigurasi Streamlit UI ---
 st.set_page_config(layout="wide", page_title="Crawler Artikel Berita Indonesia")
 
 st.title("🇮🇩 Crawler Artikel Berita Indonesia")
@@ -305,13 +316,13 @@ st.write("Aplikasi ini memungkinkan Anda untuk mencari artikel berita berdasarka
 st.subheader("Masukkan Kata Kunci")
 keyword_input = st.text_input(
     "Masukkan kata kunci untuk mencari artikel berita:",
-    help="Contoh: 'Bank Mandiri', 'Rupiah', 'Harga Minyak'"
+    help="Contoh: 'inflasi Indonesia', 'pemilu 2024', 'harga minyak dunia'"
 )
 
 num_articles_to_crawl = st.slider(
-    "Jumlah artikel yang ingin di-crawl per kata kunci (maksimal 10 untuk demo):",
+    "Jumlah artikel yang ingin di-crawl:",
     min_value=1,
-    max_value=100, # Batasi untuk menghindari terlalu banyak crawling
+    max_value=20, # Tingkatkan batas maksimal, namun tetap moderat
     value=5
 )
 
@@ -319,34 +330,40 @@ if st.button("Cari dan Mulai Crawling"):
     if not keyword_input:
         st.warning("Mohon masukkan kata kunci.")
     else:
-        # 1. Cari URL berdasarkan kata kunci
-        urls_to_crawl = search_for_urls_from_keyword(keyword_input, num_articles_to_crawl)
-        
-        if urls_to_crawl:
-            st.success(f"Ditemukan {len(urls_to_crawl)} URL yang relevan. Memulai crawling...")
-            # 2. Lakukan crawling pada URL yang ditemukan
-            df_articles = crawl_articles(urls_to_crawl)
+        with st.spinner("Mencari URL dan crawling artikel..."):
+            # 1. Cari URL berdasarkan kata kunci
+            urls_to_crawl = search_for_urls_from_keyword(keyword_input, num_articles_to_crawl)
+            
+            if urls_to_crawl:
+                st.success(f"Ditemukan {len(urls_to_crawl)} URL yang relevan. Memulai crawling...")
+                # 2. Lakukan crawling pada URL yang ditemukan
+                df_articles = crawl_articles(urls_to_crawl)
 
-            if not df_articles.empty:
-                st.subheader("Hasil Crawling")
-                st.dataframe(df_articles)
+                if not df_articles.empty:
+                    st.subheader("Hasil Crawling")
+                    st.dataframe(df_articles)
 
-                # Bagian untuk ekspor ke XLSX
-                excel_buffer = BytesIO()
-                df_articles.to_excel(excel_buffer, index=False, engine='openpyxl')
-                excel_buffer.seek(0)
+                    # Bagian untuk ekspor ke XLSX
+                    excel_buffer = BytesIO()
+                    df_articles.to_excel(excel_buffer, index=False, engine='openpyxl')
+                    excel_buffer.seek(0)
 
-                st.download_button(
-                    label="Unduh Data sebagai XLSX",
-                    data=excel_buffer,
-                    file_name=f"{keyword_input.replace(' ', '_')}_artikel_berita.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
+                    st.download_button(
+                        label="Unduh Data sebagai XLSX",
+                        data=excel_buffer,
+                        file_name=f"{keyword_input.replace(' ', '_')}_artikel_berita.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                else:
+                    st.warning("Tidak ada artikel yang berhasil di-crawl dari URL yang ditemukan.")
             else:
-                st.warning("Tidak ada artikel yang berhasil di-crawl dari URL yang ditemukan.")
-        else:
-            st.warning("Tidak ada URL yang ditemukan untuk kata kunci tersebut dari situs berita yang didukung.")
+                st.warning("Tidak ada URL yang ditemukan untuk kata kunci tersebut dari situs berita yang didukung.")
 
 st.markdown("---")
 st.markdown("Dikembangkan dengan ❤️ oleh [Nama Anda/Komunitas Anda]")
-st.markdown("**Catatan:** Fungsi pencarian URL saat ini adalah *placeholder* dan hanya mengembalikan URL contoh. Untuk implementasi sungguhan, Anda perlu menambahkan logika pencarian (misalnya, menggunakan Google News API atau scraping hasil pencarian).")
+st.markdown("""
+**Penting:**
+* Fungsi pencarian URL mengandalkan *web scraping* Google News. Jika Google mengubah struktur halamannya, fungsi ini mungkin perlu diperbarui.
+* Lakukan crawling secara bertanggung jawab. Terlalu banyak permintaan dalam waktu singkat dapat menyebabkan IP Anda diblokir.
+* Jumlah artikel yang dapat di-crawl bergantung pada hasil yang diberikan oleh Google News dan kemampuan crawler untuk mengekstraknya.
+""")
