@@ -29,13 +29,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Input UI
-col1, col2, col3 = st.columns([3, 1, 1])
-with col1:
-    keyword = st.text_input("🔎 Kata Kunci", placeholder="misalnya: ekonomi pangan", value="ekonomi pangan")
-with col2:
-    max_pages = st.number_input("📄 Jumlah Halaman API", min_value=1, max_value=20, value=5)
-with col3:
-    run = st.button("🚀 Jalankan")
+with st.container():
+    col1, col2, col3 = st.columns([3, 1, 1])  # Ubah proporsi agar tombol tidak terlalu sempit
+
+    with col1:
+        keyword = st.text_input("🔎 Kata Kunci", placeholder="misalnya: ekonomi pangan", value="ekonomi pangan")
+
+    with col2:
+        max_pages = st.number_input("📄 Jumlah Halaman API", min_value=1, max_value=100, value=5)
+
+    with col3:
+        st.markdown("<br>", unsafe_allow_html=True)  # Untuk memberi jarak agar tombol di tengah vertikal
+        run = st.button("🚀 Jalankan", use_container_width=True)
 
 # ---------------------------
 # FUNGSI UTAMA
