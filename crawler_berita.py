@@ -6,11 +6,6 @@ from io import BytesIO
 import datetime
 
 # ---------------------------
-# KONFIGURASI API
-# ---------------------------
-NEWSDATA_API_KEY = "pub_bac20c629fae4bcf8aec74e5d99a2deb"  # Ganti dengan API key NewsData.io
-
-# ---------------------------
 # KONFIGURASI STREAMLIT
 # ---------------------------
 st.set_page_config(page_title="Crawler Berita 🇮🇩", layout="wide")
@@ -37,7 +32,7 @@ with col3:
 def fetch_from_newsdata(keyword, max_pages=5):
     all_articles = []
     for page in range(1, max_pages + 1):
-        url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=id&language=id&q={keyword}&page={page}"
+        url = f"https://newsdata.io/api/1/news?apikey=pub_bac20c629fae4bcf8aec74e5d99a2deb&country=id&language=id&q={keyword}&page={page}"
         response = requests.get(url)
         if response.status_code != 200:
             return all_articles, f"Status code {response.status_code}"
@@ -62,6 +57,10 @@ def fetch_links_duckduckgo(keyword):
     try:
         r = requests.get(url, headers=headers)
         soup = BeautifulSoup(r.text, "html.parser")
+
+        # Debug baris ini 👇
+        st.code(soup.prettify()[:3000], language='html')  # Tampilkan potongan HTML
+
         links = [a["href"] for a in soup.select(".result__a")]
         return links
     except Exception as e:
