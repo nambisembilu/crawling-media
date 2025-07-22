@@ -6,10 +6,21 @@ from io import BytesIO
 import datetime
 
 # ---------------------------
+# KONFIGURASI API
+# ---------------------------
+NEWSDATA_API_KEY = "pub_e1f8e0f44ae641dbbf8843c814329a1f"  # GANTI dengan API key asli Anda dari https://newsdata.io/register
+
+# ---------------------------
+# CEK API KEY
+# ---------------------------
+if NEWSDATA_API_KEY == "pub_e1f8e0f44ae641dbbf8843c814329a1f" or not NEWSDATA_API_KEY.strip():
+    st.error("❌ Anda belum mengisi API Key NewsData.io. Silakan daftarkan akun di https://newsdata.io/register")
+    st.stop()
+
+# ---------------------------
 # KONFIGURASI STREAMLIT
 # ---------------------------
 st.set_page_config(page_title="Crawler Berita 🇮🇩", layout="wide")
-
 st.markdown("""
 <div style="padding: 1rem; background: #1f2937; color: white; border-radius: 0.5rem; margin-bottom: 2rem;">
   <h1 style="font-size: 2rem; font-weight: bold;">📰 Crawler Berita Indonesia</h1>
@@ -31,11 +42,18 @@ with col3:
 # ---------------------------
 def fetch_from_newsdata(keyword, max_pages=5):
     all_articles = []
+    if not keyword.strip():
+        return [], "Keyword kosong. Harap masukkan kata kunci."
+
     for page in range(1, max_pages + 1):
-        url = f"https://newsdata.io/api/1/news?apikey=pub_e1f8e0f44ae641dbbf8843c814329a1f&country=id&language=id&q={keyword}&page={page}"
+        url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=id&language=id&q={keyword}&page={page}"
         response = requests.get(url)
         if response.status_code != 200:
-            return all_articles, f"Status code {response.status_code}"
+            try:
+                error_detail = response.json().get("message", "")
+            except:
+                error_detail = response.text
+            return all_articles, f"Status code {response.status_code} – {error_detail}"
         data = response.json()
         results = data.get("results", [])
         if not results:
@@ -57,10 +75,6 @@ def fetch_links_duckduckgo(keyword):
     try:
         r = requests.get(url, headers=headers)
         soup = BeautifulSoup(r.text, "html.parser")
-
-        # Debug baris ini 👇
-        st.code(soup.prettify()[:3000], language='html')  # Tampilkan potongan HTML
-
         links = [a["href"] for a in soup.select(".result__a")]
         return links
     except Exception as e:
