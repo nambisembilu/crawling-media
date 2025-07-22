@@ -5,44 +5,55 @@ import pandas as pd
 from io import BytesIO
 import datetime
 
-# --- API Key NewsData.io ---
-NEWSDATA_API_KEY = "ISI_API_KEY_ANDA"
+# ---------------------------
+# KONFIGURASI API
+# ---------------------------
+NEWSDATA_API_KEY = "pub_bac20c629fae4bcf8aec74e5d99a2deb"  # Ganti dengan API key NewsData.io
 
+# ---------------------------
+# KONFIGURASI STREAMLIT
+# ---------------------------
 st.set_page_config(page_title="Crawler Berita 🇮🇩", layout="wide")
 
-# --- Tailwind-like Header ---
 st.markdown("""
 <div style="padding: 1rem; background: #1f2937; color: white; border-radius: 0.5rem; margin-bottom: 2rem;">
   <h1 style="font-size: 2rem; font-weight: bold;">📰 Crawler Berita Indonesia</h1>
-  <p style="margin: 0.5rem 0 0;">Cari berita dari berbagai portal menggunakan kata kunci</p>
+  <p style="margin: 0.5rem 0 0;">Cari berita dari berbagai portal populer menggunakan kata kunci tertentu.</p>
 </div>
 """, unsafe_allow_html=True)
 
-# --- Keyword Input ---
-col1, col2 = st.columns([3, 1])
+# Input UI
+col1, col2, col3 = st.columns([3, 1, 1])
 with col1:
     keyword = st.text_input("🔎 Kata Kunci", placeholder="misalnya: ekonomi pangan", value="ekonomi pangan")
 with col2:
+    max_pages = st.number_input("📄 Jumlah Halaman API", min_value=1, max_value=20, value=5)
+with col3:
     run = st.button("🚀 Jalankan")
 
-# --- Functions ---
-def fetch_from_newsdata(keyword):
-    url = f"https://newsdata.io/api/1/news?apikey=pub_bac20c629fae4bcf8aec74e5d99a2deb&country=id&language=id&q={keyword}"
-    response = requests.get(url)
-    if response.status_code != 200:
-        return [], "Gagal mengakses NewsData.io"
-    data = response.json()
-    results = data.get("results", [])
-    articles = []
-    for item in results:
-        articles.append({
-            "title": item.get("title"),
-            "source": item.get("source_id"),
-            "url": item.get("link"),
-            "published": item.get("pubDate"),
-            "description": item.get("description")
-        })
-    return articles, None
+# ---------------------------
+# FUNGSI UTAMA
+# ---------------------------
+def fetch_from_newsdata(keyword, max_pages=5):
+    all_articles = []
+    for page in range(1, max_pages + 1):
+        url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=id&language=id&q={keyword}&page={page}"
+        response = requests.get(url)
+        if response.status_code != 200:
+            break
+        data = response.json()
+        results = data.get("results", [])
+        if not results:
+            break
+        for item in results:
+            all_articles.append({
+                "title": item.get("title"),
+                "source": item.get("source_id"),
+                "url": item.get("link"),
+                "published": item.get("pubDate"),
+                "description": item.get("description")
+            })
+    return all_articles, None
 
 def fetch_links_duckduckgo(keyword):
     query = f"{keyword} site:cnnindonesia.com OR site:kompas.com"
@@ -65,40 +76,45 @@ def parse_news_content(url):
             title = soup.find("h1").get_text(strip=True)
             body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
         else:
-            title = soup.title.get_text(strip=True)
+            title = soup.title.get_text(strip=True) if soup.title else "Tanpa Judul"
             body = ""
         return {"title": title, "url": url, "content": body}
     except:
         return None
 
-# --- Main Logic ---
+# ---------------------------
+# EKSEKUSI UTAMA
+# ---------------------------
 if run and keyword:
+    # 1. Dari API NewsData.io
     st.info("📡 Mengambil data dari NewsData.io...")
-    newsdata_articles, error = fetch_from_newsdata(keyword)
+    newsdata_articles, error = fetch_from_newsdata(keyword, max_pages=max_pages)
     if error:
         st.warning(error)
     df_newsdata = pd.DataFrame(newsdata_articles)
     st.success(f"✅ {len(df_newsdata)} artikel ditemukan dari NewsData.io")
 
+    # 2. Fallback DuckDuckGo
     st.info("🌐 Mengambil link dari DuckDuckGo...")
     links = fetch_links_duckduckgo(keyword)
-    st.write(f"🔗 {len(links)} link ditemukan dari CNN & Kompas")
+    st.write(f"🔗 {len(links)} link ditemukan dari CNN/Kompas")
 
-    st.info("🧠 Parsing konten berita dari CNN/Kompas...")
+    # 3. Parse konten dari CNN/Kompas
+    st.info("🧠 Mengambil konten artikel dari masing-masing link...")
     parsed_articles = []
     for link in links:
         parsed = parse_news_content(link)
         if parsed:
             parsed_articles.append(parsed)
     df_parsed = pd.DataFrame(parsed_articles)
-    st.success(f"✅ {len(df_parsed)} artikel berhasil diambil dari link")
+    st.success(f"✅ {len(df_parsed)} artikel berhasil diparsing dari halaman asli")
 
-    # Gabungkan
+    # 4. Gabungkan semua data
     df_all = pd.concat([df_newsdata, df_parsed], ignore_index=True)
     st.markdown("### 🗂️ Hasil Crawling Berita")
     st.dataframe(df_all)
 
-    # Export to Excel
+    # 5. Export ke Excel
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_all.to_excel(writer, index=False, sheet_name="Berita")
