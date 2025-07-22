@@ -4,17 +4,15 @@ from bs4 import BeautifulSoup
 import pandas as pd
 from io import BytesIO
 import datetime
+import urllib.parse
 
 # ---------------------------
-# KONFIGURASI API
+# KONFIGURASI API SERPAPI
 # ---------------------------
-NEWSDATA_API_KEY = 'pub_e1f8e0f44ae641dbbf8843c814329a1f'  # GANTI dengan API key asli Anda dari https://newsdata.io/register
+SERPAPI_KEY = 'ISI_API_KEY_SERPAPI_ANDA'  # Ganti dengan API key asli dari https://serpapi.com/
 
-# ---------------------------
-# CEK API KEY
-# ---------------------------
-if not NEWSDATA_API_KEY or not NEWSDATA_API_KEY.strip():
-    st.error("❌ Anda belum mengisi API Key NewsData.io. Silakan daftarkan akun di https://newsdata.io/register")
+if not SERPAPI_KEY.strip():
+    st.error("❌ Anda belum mengisi API Key SerpApi. Silakan daftarkan akun di https://serpapi.com/")
     st.stop()
 
 # ---------------------------
@@ -23,116 +21,56 @@ if not NEWSDATA_API_KEY or not NEWSDATA_API_KEY.strip():
 st.set_page_config(page_title="Crawler Berita 🇮🇩", layout="wide")
 st.markdown("""
 <div style="padding: 1rem; background: #1f2937; color: white; border-radius: 0.5rem; margin-bottom: 2rem;">
-  <h1 style="font-size: 2rem; font-weight: bold;">📰 Crawler Berita Indonesia</h1>
-  <p style="margin: 0.5rem 0 0;">Cari berita dari berbagai portal populer menggunakan kata kunci tertentu.</p>
+  <h1 style="font-size: 2rem; font-weight: bold;">📰 Crawler Berita Indonesia via SerpApi</h1>
+  <p style="margin: 0.5rem 0 0;">Cari berita dari portal populer menggunakan kata kunci melalui hasil Google Search.</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Input UI
+# ---------------------------
+# INPUT FORM
+# ---------------------------
 with st.container():
-    col1, col2, col3 = st.columns([3, 1, 1])  # Ubah proporsi agar tombol tidak terlalu sempit
-
+    col1, col2, col3 = st.columns([3, 1, 1])
     with col1:
         keyword = st.text_input("🔎 Kata Kunci", placeholder="misalnya: ekonomi pangan", value="")
-
     with col2:
-        max_pages = st.number_input("📄 Jumlah Halaman API", min_value=1, max_value=100, value=5)
-
+        jumlah = st.number_input("🔢 Jumlah Artikel", min_value=1, max_value=100, value=20)
     with col3:
-        st.markdown("<br>", unsafe_allow_html=True)  # Untuk memberi jarak agar tombol di tengah vertikal
+        st.markdown("<br>", unsafe_allow_html=True)
         run = st.button("🚀 Jalankan", use_container_width=True)
 
 # ---------------------------
-# FUNGSI UTAMA
+# FUNGSI: FETCH DARI SERPAPI
 # ---------------------------
-def fetch_from_newsdata(keyword, max_pages=5):
-    all_articles = []
-    if not keyword.strip():
-        return [], "Keyword kosong. Harap masukkan kata kunci."
+def fetch_links_serpapi(query, max_results=20):
+    q = urllib.parse.quote(query)
+    url = f"https://serpapi.com/search.json?q={q}&api_key={SERPAPI_KEY}&num={max_results}&hl=id&gl=id"
+    r = requests.get(url)
+    if r.status_code != 200:
+        return [], f"Status {r.status_code} – {r.text}"
+    data = r.json()
+    results = data.get("organic_results", [])
+    links = []
+    for item in results:
+        link = item.get("link")
+        title = item.get("title")
+        if link and title and any(x in link for x in [
+            "cnnindonesia.com", "kompas.com", "liputan6.com", "tempo.co",
+            "antaranews.com", "republika.co.id", "viva.co.id"
+        ]):
+            links.append({"title": title, "url": link})
+    return links, None
 
-    for page in range(1, max_pages + 1):
-        url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=id&language=id&q={keyword}"
-        response = requests.get(url)
-        if response.status_code != 200:
-            try:
-                # Ambil semua isi JSON error dan tampilkan detail
-                full_error = response.json()
-                return all_articles, f"Status {response.status_code} – {full_error}"
-            except Exception as e:
-                # Jika bukan JSON, tampilkan plain text
-                return all_articles, f"Status {response.status_code} – {response.text}"
-        
-        # Normal response
-        data = response.json()
-        results = data.get("results", [])
-        if not results:
-            break
-        for item in results:
-            all_articles.append({
-                "title": item.get("title"),
-                "source": item.get("source_id"),
-                "url": item.get("link"),
-                "published": item.get("pubDate"),
-                "description": item.get("description")
-            })
-    return all_articles, None
-
-
-def fetch_links_duckduckgo(keyword):
-    query = f"{keyword} site:cnnindonesia.com OR site:kompas.com OR site:liputan6.com OR site:tempo.co OR site:antaranews.com OR site:republika.co.id OR site:viva.co.id"
-    url = f"https://html.duckduckgo.com/html/?q={query}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        r = requests.get(url, headers=headers)
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        # Coba tampilkan HTML yang diterima (maks 3000 karakter)
-        debug_html = soup.prettify()[:3000]
-        st.expander("🔎 Debug HTML DuckDuckGo").code(debug_html, language="html")
-
-        # Coba selector default
-        links = [a["href"] for a in soup.select(".result__a")]
-        if not links:
-            # Fallback selector alternatif (untuk berjaga-jaga)
-            links = [a["href"] for a in soup.find_all("a", href=True) if "cnnindonesia" in a["href"] or "kompas.com" in a["href"]]
-
-        return links
-    except Exception as e:
-        st.warning(f"❌ Error DuckDuckGo: {e}")
-        return []
-
+# ---------------------------
+# FUNGSI: PARSE KONTEN ARTIKEL
+# ---------------------------
 def parse_news_content(url):
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         r = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(r.text, "html.parser")
-        if "cnnindonesia.com" in url:
-            title = soup.find("h1").get_text(strip=True)
-            body = " ".join([p.get_text(strip=True) for p in soup.select("div.detail_text p")])
-        elif "kompas.com" in url:
-            title = soup.find("h1").get_text(strip=True)
-            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
-        elif "liputan6.com" in url:
-            title = soup.find("h1").get_text(strip=True)
-            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
-        elif "tempo.co" in url:
-            title = soup.find("h1").get_text(strip=True)
-            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
-        elif "antaranews.com" in url:
-            title = soup.find("h1").get_text(strip=True)
-            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
-        elif "republika.co.id" in url:
-            title = soup.find("h1").get_text(strip=True)
-            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
-        elif "viva.co.id" in url:
-            title = soup.find("h1").get_text(strip=True)
-            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
-        elif "kompas.com" in url:
-            title = soup.find("h1").get_text(strip=True)
-            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
-        else:
-            title = soup.title.get_text(strip=True) if soup.title else "Tanpa Judul"
-            body = ""
+        title = soup.find("h1").get_text(strip=True) if soup.find("h1") else (soup.title.get_text(strip=True) if soup.title else "Tanpa Judul")
+        body = " ".join([p.get_text(strip=True) for p in soup.find_all("p")])
         return {"title": title, "url": url, "content": body}
     except:
         return None
@@ -140,41 +78,36 @@ def parse_news_content(url):
 # ---------------------------
 # EKSEKUSI UTAMA
 # ---------------------------
-if run and keyword:
-    # 1. Ambil dari API NewsData.io
-    st.info("📡 Mengambil data dari NewsData.io...")
-    newsdata_articles, error = fetch_from_newsdata(keyword, max_pages=max_pages)
+if run:
+    if not keyword.strip():
+        st.warning("⚠️ Silakan masukkan kata kunci terlebih dahulu.")
+        st.stop()
+
+    st.info("🔍 Mengambil hasil pencarian dari Google via SerpApi...")
+    results, error = fetch_links_serpapi(keyword, jumlah)
     if error:
-        st.warning(f"⚠️ ERROR NewsData.io: {error}")
-    else:
-        st.success(f"✅ {len(newsdata_articles)} artikel ditemukan dari NewsData.io")
-        st.dataframe(pd.DataFrame(newsdata_articles).head())
+        st.warning(f"⚠️ Gagal mengambil data dari SerpApi: {error}")
+        st.stop()
 
-    # 2. Ambil link dari DuckDuckGo
-    st.info("🌐 Mengambil link dari DuckDuckGo...")
-    links = fetch_links_duckduckgo(keyword)
-    st.write(f"🔗 {len(links)} link ditemukan dari DuckDuckGo")
-    if not links:
-        st.warning("⚠️ DuckDuckGo tidak mengembalikan hasil.")
+    st.success(f"✅ Ditemukan {len(results)} artikel dari hasil pencarian.")
+    st.dataframe(pd.DataFrame(results).head())
 
-    # 3. Parse konten dari CNN/Kompas
-    st.info("🧠 Parsing artikel dari CNN & Kompas...")
+    st.info("🧠 Parsing isi artikel dari portal berita...")
     parsed_articles = []
-    for link in links:
-        parsed = parse_news_content(link)
+    for r in results:
+        parsed = parse_news_content(r["url"])
         if parsed:
             parsed_articles.append(parsed)
         else:
-            st.write(f"❌ Gagal parsing: {link}")
-    st.success(f"✅ {len(parsed_articles)} artikel berhasil di-parse.")
-    st.dataframe(pd.DataFrame(parsed_articles).head())
+            st.write(f"❌ Gagal parsing: {r['url']}")
 
-    # 4. Gabungkan semua
-    df_all = pd.DataFrame(newsdata_articles + parsed_articles)
-    st.markdown("### 🗂️ Total Artikel")
+    st.success(f"✅ {len(parsed_articles)} artikel berhasil diambil.")
+    df_all = pd.DataFrame(parsed_articles)
     st.dataframe(df_all)
 
-    # 5. Export ke Excel
+    # ---------------------------
+    # EXPORT KE EXCEL
+    # ---------------------------
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_all.to_excel(writer, index=False, sheet_name="Berita")
@@ -183,6 +116,6 @@ if run and keyword:
     st.download_button(
         label="⬇️ Download Excel",
         data=output,
-        file_name=f'berita_{keyword}_{datetime.date.today()}.xlsx',
+        file_name=f'berita_serpapi_{keyword}_{datetime.date.today()}.xlsx',
         mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
