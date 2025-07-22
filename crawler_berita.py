@@ -246,9 +246,7 @@ def crawl_articles(urls):
         time.sleep(1.5) # Jeda untuk menghindari pemblokiran
     return pd.DataFrame(results)
 
----
 ## Fungsi Pencarian Artikel Berita (Menggunakan DuckDuckGo)
----
 
 def search_for_urls_from_keyword(keyword, num_results=5):
     """
