@@ -7,11 +7,11 @@ from datetime import datetime
 import time
 import urllib.parse
 from io import BytesIO
-import base64 # Pastikan ini ada di bagian paling atas file Anda!
+import base64 
 
-# --- Fungsi Crawler Artikel (Biarkan Sama) ---
-# ... (kode get_detik_article, get_kompas_article, get_sindonews_article, get_liputan6_article, get_cnn_article) ...
-# (Saya asumsikan bagian ini tetap sama dan sudah ada di file app.py Anda)
+# --- Fungsi Crawler Artikel ---
+# Fungsi-fungsi ini bertanggung jawab untuk mengambil detail artikel dari masing-masing situs berita.
+# Pastikan semua fungsi ini memiliki headers={'User-Agent': ...} di dalamnya untuk menghindari pemblokiran.
 
 def get_detik_article(url):
     try:
@@ -215,6 +215,9 @@ def get_cnn_article(url):
         return None
 
 def crawl_articles(urls):
+    """
+    Meng-crawl data artikel dari daftar URL yang diberikan.
+    """
     results = []
     if not urls:
         return pd.DataFrame(results)
@@ -223,6 +226,7 @@ def crawl_articles(urls):
     progress_bar = st.progress(0)
     for i, url in enumerate(urls):
         article_data = None
+        # Mengidentifikasi domain untuk memanggil crawler yang sesuai
         if "detik.com" in url:
             article_data = get_detik_article(url)
         elif "kompas.com" in url:
@@ -234,14 +238,22 @@ def crawl_articles(urls):
         elif "cnnindonesia.com" in url:
             article_data = get_cnn_article(url)
         else:
-            st.warning(f"URL tidak dikenali atau tidak didukung untuk crawling: {url}. Melewatkan.")
+            # st.warning(f"URL tidak dikenali atau tidak didukung untuk crawling: {url}. Melewatkan.") # Dinonaktifkan untuk mengurangi output berlebihan
+            pass # Melewatkan URL yang tidak didukung secara diam-diam
 
         if article_data:
             results.append(article_data)
         progress_bar.progress((i + 1) / len(urls))
-        time.sleep(1.5) 
+        time.sleep(1.5) # Jeda untuk menghindari pemblokiran
     return pd.DataFrame(results)
 
+---
+
+## Fungsi Pencarian Artikel Berita (Menggunakan DuckDuckGo)
+
+Fungsi ini telah diperbarui untuk mencari URL artikel dari DuckDuckGo. Saya telah menyertakan dua strategi seleksi umum yang mungkin berlaku untuk DuckDuckGo: `result__a` dan pendekatan yang lebih umum dengan `h2 a` atau `a[href^="http"]` di dalam elemen hasil.
+
+```python
 def search_for_urls_from_keyword(keyword, num_results=5):
     """
     Melakukan pencarian di DuckDuckGo untuk mendapatkan URL artikel berdasarkan kata kunci.
@@ -249,13 +261,13 @@ def search_for_urls_from_keyword(keyword, num_results=5):
     st.info(f"Mencari URL artikel di DuckDuckGo untuk keyword: '{keyword}'...")
     
     supported_domains = [
-        "detik.com", "kompas.com", "sindonews.com", "liputan6.com", "cnnindonesia.com", "tempo.co", "tribunnews.com", "okezone.com", "merdeka.com", "antaranews.com", "republika.co.id"
+        "detik.com", "kompas.com", "sindonews.com", "liputan6.com", "cnnindonesia.com", 
+        "tempo.co", "tribunnews.com", "okezone.com", "merdeka.com", "antaranews.com", "republika.co.id"
     ]
     
     encoded_keyword = urllib.parse.quote_plus(keyword)
-    # DuckDuckGo search URL for news. Using 'ia=news' to filter results by news.
-    # Adjust `kp=-2` to disable personalization/tracking if needed, though DDG is privacy-focused by default.
-    search_url = f"https://duckduckgo.com/?q={encoded_keyword}&ia=news" 
+    # Gunakan 'ia=news' untuk memfilter hasil berita di DuckDuckGo
+    search_url = f"[https://duckduckgo.com/?q=](https://duckduckgo.com/?q=){encoded_keyword}&ia=news" 
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -271,41 +283,55 @@ def search_for_urls_from_keyword(keyword, num_results=5):
         response.raise_for_status() 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # DuckDuckGo news results typically have `a` tags within `div` elements
-        # with classes like 'result__a' or similar for the main link.
-        # It's important to inspect DuckDuckGo's news result page's HTML to find the correct selector.
-        # As of now, 'result__a' is a common class for the main result link.
-        
-        # Look for the main article links.
-        # Often, the link is directly in an 'a' tag with class 'result__a' or similar.
-        # For news results, they sometimes have a specific structure.
-        
-        # Let's try to find elements that are clearly news articles.
-        # Based on a quick inspection of DuckDuckGo news results:
-        # Main links are often 'a' tags within 'div.result__body' with class 'result__a'
-        # or 'a' tags directly under 'div.result--news'.
-        
-        # Iterate over all result links
+        # Strategi 1: Mencari link dengan class 'result__a'
+        # Ini adalah class yang umum ditemukan untuk tautan utama di hasil DuckDuckGo.
         for link_tag in soup.find_all('a', class_='result__a'):
             href = link_tag.get('href')
             if href and href.startswith('http'):
-                # DuckDuckGo often provides direct links.
-                # Remove DuckDuckGo's internal redirect if present (e.g., /l/?kh=...&uddg=...)
-                if href.startswith('https://duckduckgo.com/l/'):
+                # Penanganan redirect internal DuckDuckGo (jika ada)
+                if href.startswith('[https://duckduckgo.com/l/](https://duckduckgo.com/l/)'):
                     parsed_url = urllib.parse.urlparse(href)
                     query_params = urllib.parse.parse_qs(parsed_url.query)
                     if 'uddg' in query_params:
                         actual_url = query_params['uddg'][0]
-                        decoded_actual_url = urllib.parse.unquote(actual_url) # URL decode
+                        decoded_actual_url = urllib.parse.unquote(actual_url) 
                         href = decoded_actual_url
                 
                 for domain in supported_domains:
                     if domain in href:
-                        if href not in found_urls:
+                        if href not in found_urls: # Hanya tambahkan jika unik
                             found_urls.append(href)
                             break 
                 if len(found_urls) >= num_results:
                     break
+        
+        # Strategi 2 (Fallback/Alternatif): Mencari link di dalam elemen hasil pencarian yang lebih umum
+        # Jika Strategi 1 tidak menemukan cukup hasil, coba cari <a> di dalam <div> yang mewakili hasil.
+        # Atau cari link yang dimulai dengan 'http' di mana saja di halaman (bisa terlalu luas).
+        if len(found_urls) < num_results:
+            # Mencari semua <a> tag yang memiliki atribut href dan dimulai dengan 'http'
+            # Ini adalah pendekatan yang lebih umum dan mungkin menangkap link jika struktur class berubah
+            for link_tag in soup.find_all('a', href=re.compile(r'^http')):
+                href = link_tag.get('href')
+                
+                # Filter tautan yang bukan merupakan bagian dari UI DuckDuckGo itu sendiri
+                if "duckduckgo.com" not in href or href.startswith("[https://duckduckgo.com/l/](https://duckduckgo.com/l/)"):
+                    # Penanganan redirect internal DuckDuckGo (jika ada)
+                    if href.startswith('[https://duckduckgo.com/l/](https://duckduckgo.com/l/)'):
+                        parsed_url = urllib.parse.urlparse(href)
+                        query_params = urllib.parse.parse_qs(parsed_url.query)
+                        if 'uddg' in query_params:
+                            actual_url = query_params['uddg'][0]
+                            decoded_actual_url = urllib.parse.unquote(actual_url) 
+                            href = decoded_actual_url
+                    
+                    for domain in supported_domains:
+                        if domain in href:
+                            if href not in found_urls: # Hanya tambahkan jika unik
+                                found_urls.append(href)
+                                break 
+                    if len(found_urls) >= num_results:
+                        break # Cukup hasil, hentikan pencarian
 
     except requests.exceptions.RequestException as e:
         status_code = response.status_code if 'response' in locals() else 'N/A'
@@ -313,6 +339,7 @@ def search_for_urls_from_keyword(keyword, num_results=5):
     except Exception as e:
         st.error(f"Terjadi kesalahan tidak terduga saat parsing hasil pencarian DuckDuckGo: {e}. **Sangat disarankan untuk memeriksa struktur HTML DuckDuckGo secara manual.**")
 
+    # Ambil URL unik dan batasi jumlahnya
     unique_urls = list(dict.fromkeys(found_urls)) 
     
     if not unique_urls:
@@ -326,7 +353,13 @@ def search_for_urls_from_keyword(keyword, num_results=5):
     
     return unique_urls[:num_results]
 
-# --- Konfigurasi Streamlit UI (Tetap Sama) ---
+---
+
+## Antarmuka Pengguna Streamlit (UI)
+
+Bagian ini tetap sama.
+
+```python
 st.set_page_config(layout="wide", page_title="Crawler Artikel Berita Indonesia")
 
 st.title("🇮🇩 Crawler Artikel Berita Indonesia")
