@@ -311,7 +311,7 @@ keyword_input = st.text_input(
 num_articles_to_crawl = st.slider(
     "Jumlah artikel yang ingin di-crawl per kata kunci (maksimal 10 untuk demo):",
     min_value=1,
-    max_value=10, # Batasi untuk menghindari terlalu banyak crawling
+    max_value=100, # Batasi untuk menghindari terlalu banyak crawling
     value=5
 )
 
