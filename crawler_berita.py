@@ -27,7 +27,7 @@ with col2:
 
 # --- Functions ---
 def fetch_from_newsdata(keyword):
-    url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=id&language=id&q={keyword}"
+    url = f"https://newsdata.io/api/1/news?apikey=pub_bac20c629fae4bcf8aec74e5d99a2deb&country=id&language=id&q={keyword}"
     response = requests.get(url)
     if response.status_code != 200:
         return [], "Gagal mengakses NewsData.io"
