@@ -79,13 +79,23 @@ def fetch_from_newsdata(keyword, max_pages=5):
 
 
 def fetch_links_duckduckgo(keyword):
-    query = f"{keyword} site:cnnindonesia.com OR site:kompas.com"
+    query = f"{keyword} site:cnnindonesia.com OR site:kompas.com OR site:liputan6.com OR site:tempo.co OR site:antaranews.com OR site:republika.co.id OR site:viva.co.id"
     url = f"https://html.duckduckgo.com/html/?q={query}"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         r = requests.get(url, headers=headers)
         soup = BeautifulSoup(r.text, "html.parser")
+
+        # Coba tampilkan HTML yang diterima (maks 3000 karakter)
+        debug_html = soup.prettify()[:3000]
+        st.expander("🔎 Debug HTML DuckDuckGo").code(debug_html, language="html")
+
+        # Coba selector default
         links = [a["href"] for a in soup.select(".result__a")]
+        if not links:
+            # Fallback selector alternatif (untuk berjaga-jaga)
+            links = [a["href"] for a in soup.find_all("a", href=True) if "cnnindonesia" in a["href"] or "kompas.com" in a["href"]]
+
         return links
     except Exception as e:
         st.warning(f"❌ Error DuckDuckGo: {e}")
@@ -99,6 +109,24 @@ def parse_news_content(url):
         if "cnnindonesia.com" in url:
             title = soup.find("h1").get_text(strip=True)
             body = " ".join([p.get_text(strip=True) for p in soup.select("div.detail_text p")])
+        elif "kompas.com" in url:
+            title = soup.find("h1").get_text(strip=True)
+            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
+        elif "liputan6.com" in url:
+            title = soup.find("h1").get_text(strip=True)
+            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
+        elif "tempo.co" in url:
+            title = soup.find("h1").get_text(strip=True)
+            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
+        elif "antaranews.com" in url:
+            title = soup.find("h1").get_text(strip=True)
+            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
+        elif "republika.co.id" in url:
+            title = soup.find("h1").get_text(strip=True)
+            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
+        elif "viva.co.id" in url:
+            title = soup.find("h1").get_text(strip=True)
+            body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
         elif "kompas.com" in url:
             title = soup.find("h1").get_text(strip=True)
             body = " ".join([p.get_text(strip=True) for p in soup.select("div.read__content p")])
