@@ -7,6 +7,7 @@ from datetime import datetime
 import time
 import urllib.parse
 from io import BytesIO
+import base64
 
 # --- Fungsi Crawler Artikel (Biarkan Sama, sudah cukup robust dengan User-Agent) ---
 # (Pastikan semua fungsi get_xxx_article memiliki headers={'User-Agent': ...} di dalamnya)
