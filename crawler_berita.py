@@ -7,13 +7,14 @@ from datetime import datetime
 import time
 import urllib.parse
 from io import BytesIO
-import base64
+import base64 # Pastikan ini ada di bagian paling atas file Anda!
 
-# --- Fungsi Crawler Artikel (Biarkan Sama, sudah cukup robust dengan User-Agent) ---
+# --- Fungsi Crawler Artikel (Biarkan Sama) ---
 # (Pastikan semua fungsi get_xxx_article memiliki headers={'User-Agent': ...} di dalamnya)
 # ... (kode get_detik_article, get_kompas_article, get_sindonews_article, get_liputan6_article, get_cnn_article) ...
-# (Saya asumsikan bagian ini tetap sama dan sudah ada di file app.py Anda)
+# (Saya asumsikan bagian ini tetap sama dan sudah ada di file app.py Anda dari revisi sebelumnya)
 
+# Hanya untuk memastikan fungsi-fungsi ini ada jika Anda hanya menyalin sebagian:
 def get_detik_article(url):
     try:
         response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'})
@@ -51,10 +52,10 @@ def get_detik_article(url):
 
         return {'url': url, 'title': title, 'date': date, 'content': content}
     except requests.exceptions.RequestException as e:
-        st.error(f"Error mengakses URL Detik {url}: {e}")
+        # st.error(f"Error mengakses URL Detik {url}: {e}") # Nonaktifkan untuk mengurangi spam error di UI
         return None
     except Exception as e:
-        st.error(f"Error parsing Detik article {url}: {e}")
+        # st.error(f"Error parsing Detik article {url}: {e}") # Nonaktifkan untuk mengurangi spam error di UI
         return None
 
 def get_kompas_article(url):
@@ -90,10 +91,10 @@ def get_kompas_article(url):
 
         return {'url': url, 'title': title, 'date': date, 'content': content}
     except requests.exceptions.RequestException as e:
-        st.error(f"Error mengakses URL Kompas {url}: {e}")
+        # st.error(f"Error mengakses URL Kompas {url}: {e}")
         return None
     except Exception as e:
-        st.error(f"Error parsing Kompas article {url}: {e}")
+        # st.error(f"Error parsing Kompas article {url}: {e}")
         return None
 
 def get_sindonews_article(url):
@@ -112,7 +113,7 @@ def get_sindonews_article(url):
             date_str = match.group(1)
             month_map = {
                 'Januari': '01', 'Februari': '02', 'Maret': '03', 'April': '04', 'Mei': '05', 'Juni': '06',
-                'Juli': '07', 'Agustus': '08', 'September': '09', 'Oktober': '10', 'November': '11', 'Desember': '12'
+                'Juli': '07', 'Agustus': '08', 'September': '09', 'Okt': '10', 'November': '11', 'Desember': '12'
             }
             for full, num in month_map.items():
                 date_str = date_str.replace(full, num)
@@ -133,10 +134,10 @@ def get_sindonews_article(url):
 
         return {'url': url, 'title': title, 'date': date, 'content': content}
     except requests.exceptions.RequestException as e:
-        st.error(f"Error mengakses URL SindoNews {url}: {e}")
+        # st.error(f"Error mengakses URL SindoNews {url}: {e}")
         return None
     except Exception as e:
-        st.error(f"Error parsing SindoNews article {url}: {e}")
+        # st.error(f"Error parsing SindoNews article {url}: {e}")
         return None
 
 def get_liputan6_article(url):
@@ -176,10 +177,10 @@ def get_liputan6_article(url):
 
         return {'url': url, 'title': title, 'date': date, 'content': content}
     except requests.exceptions.RequestException as e:
-        st.error(f"Error mengakses URL Liputan6 {url}: {e}")
+        # st.error(f"Error mengakses URL Liputan6 {url}: {e}")
         return None
     except Exception as e:
-        st.error(f"Error parsing Liputan6 article {url}: {e}")
+        # st.error(f"Error parsing Liputan6 article {url}: {e}")
         return None
 
 def get_cnn_article(url):
@@ -219,10 +220,10 @@ def get_cnn_article(url):
 
         return {'url': url, 'title': title, 'date': date, 'content': content}
     except requests.exceptions.RequestException as e:
-        st.error(f"Error mengakses URL CNN Indonesia {url}: {e}")
+        # st.error(f"Error mengakses URL CNN Indonesia {url}: {e}")
         return None
     except Exception as e:
-        st.error(f"Error parsing CNN Indonesia article {url}: {e}")
+        # st.error(f"Error parsing CNN Indonesia article {url}: {e}")
         return None
 
 def crawl_articles(urls):
@@ -233,7 +234,7 @@ def crawl_articles(urls):
     st.info(f"Memulai crawling untuk {len(urls)} URL yang ditemukan...")
     progress_bar = st.progress(0)
     for i, url in enumerate(urls):
-        st.info(f"Mengambil artikel dari: {url}")
+        # st.info(f"Mengambil artikel dari: {url}") # Nonaktifkan untuk mengurangi spam info di UI
         article_data = None
         if "detik.com" in url:
             article_data = get_detik_article(url)
@@ -254,7 +255,7 @@ def crawl_articles(urls):
         time.sleep(1.5) 
     return pd.DataFrame(results)
 
-# --- Fungsionalitas Pencarian (Diperbarui) ---
+# --- Fungsionalitas Pencarian (Revisi Kedua) ---
 def search_for_urls_from_keyword(keyword, num_results=5):
     """
     Melakukan pencarian di Google News untuk mendapatkan URL artikel berdasarkan kata kunci.
@@ -262,11 +263,14 @@ def search_for_urls_from_keyword(keyword, num_results=5):
     st.info(f"Mencari URL artikel di Google News untuk keyword: '{keyword}'...")
     
     supported_domains = [
-        "detik.com", "kompas.com", "sindonews.com", "liputan6.com", "cnnindonesia.com"
+        "detik.com", "kompas.com", "sindonews.com", "liputan6.com", "cnnindonesia.com", "tempo.co", "tribunnews.com", "okezone.com", "merdeka.com", "antaranews.com", "republika.co.id"
     ]
     
     encoded_keyword = urllib.parse.quote_plus(keyword)
-    search_url = f"https://news.google.com/search?q={encoded_keyword}&hl=id&gl=ID&ceid=ID:id"
+    # Gunakan parameter &tbm=nws untuk memastikan hasil adalah berita (walaupun news.google.com sudah cukup)
+    # Tambahkan parameter &hl=id&gl=ID&ceid=ID:id untuk spesifik Indonesia
+    search_url = f"https://www.google.com/search?q={encoded_keyword}&tbm=nws&hl=id&gl=ID&ceid=ID:id"
+    
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
@@ -281,100 +285,119 @@ def search_for_urls_from_keyword(keyword, num_results=5):
         response.raise_for_status() 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # === START OF UPDATED SELECTOR LOGIC ===
-        # Prioritaskan mencari link dengan pola href './read/CBMi'
-        # Pola ini lebih stabil karena merupakan format internal Google News untuk artikel yang sudah diringkas.
-        for link_tag in soup.find_all('a', href=re.compile(r'^\./read/CBMi')):
-            relative_url = link_tag.get('href')
-            full_url = urllib.parse.urljoin("https://news.google.com/", relative_url)
-            
-            # Pastikan URL yang ditemukan adalah URL berita eksternal, bukan internal Google News
-            if full_url.startswith('http') and not "news.google.com/read" in full_url:
-                # URL artikel asli seringkali dienkode di dalam parameter URL Google News
-                # Kita perlu mengekstrak URL asli dari parameter CBMi.
-                # Contoh: ./read/CBMiUEFVX3lxTE8zS0hPRV9uMVkwQlhYWjFmZ1U0T2pHeE0zYi1Jc3RoeHpNNG1lOHZ4VGM1WVQ0STg4cDZBa2ZvRU1wdTlsbmIyVnVURTFHLUVV?hl=en-ID&gl=ID&ceid=ID%3Aen
-                # Parameter CBMi berisi URL yang dienkode Base64.
-                # Mari kita coba ambil URL asli dari data-n-cid atau jslog, atau cari cara lain.
-
-                # Berdasarkan inspeksi, link "JtKRv" adalah link langsung ke artikel
-                # Mari kita coba selektor yang lebih spesifik yang langsung ke URL artikel target.
-                # Kita akan mencoba menemukan tag 'a' dengan class "JtKRv"
-                # dan juga memiliki atribut 'href' yang bukan '/search' atau '/topics'.
+        # Coba identifikasi link ke artikel dari hasil pencarian Google reguler (tab berita)
+        # Cari semua link yang memiliki atribut 'href' dan bukan link internal Google
+        # Google News seringkali membungkus URL asli dalam query parameter 'url' atau mengarahkan via /url?q=
+        
+        # Periksa tag <a> dengan kelas 'WwrzSb' yang ditemukan di source code terbaru Google News
+        # atau tag 'a' di dalam elemen 'article' yang juga punya link judul
+        
+        # Opsi 1: Cari link di dalam struktur artikel Google News langsung
+        # Ini lebih cocok jika kita scraping news.google.com, bukan google.com/search?tbm=nws
+        # Karena kita sekarang menggunakan google.com/search?tbm=nws, strukturnya berbeda.
+        # Pada google.com/search?tbm=nws, link langsung ke situs berita asli adalah yang paling umum.
+        
+        # Select link elements by inspecting the actual Google News search results page.
+        # Often, the actual link is in `a.WwrzSb` or similar, but the most reliable way 
+        # for `google.com/search?tbm=nws` is to look for `a` tags within `div` that have `data-href` or similar,
+        # or simply `a` tags with `jsname="hXwDdf"` or `class="l"` (for the main link)
+        
+        # Update: Google.com/search?tbm=nws often uses a class like 'l' or is directly inside a `div.Ww4FFb`
+        # Let's target the primary link to the article.
+        
+        # Try finding all 'a' tags that likely lead to external sites
+        # The main title link on google.com/search?tbm=nws usually has class 'l' or is within `div.g`
+        
+        # The most reliable links are usually within the main search result blocks
+        # Look for div with class like 'g' or 'gG0TJ'. The link itself is often `a` tag directly
+        # within it, or a child of `h3` or similar.
+        
+        # Based on observations for google.com/search?tbm=nws
+        # The actual article link is often within a `div` that contains `data-hveid` and the `href` is a direct link.
+        # A common pattern is `a` tags with `jsname="YFKh9e"` or just `a` tags inside `div.Ww4FFb` (the main result block)
+        
+        for link_tag in soup.find_all('a', class_='WwrzSb'): # This class was found in the user's provided snippet, good starting point
+            href = link_tag.get('href')
+            if href and href.startswith('./read/CBMi'):
+                # This is a Google News internal link. We need to parse it.
+                full_google_news_url = urllib.parse.urljoin("https://news.google.com/", href)
                 
-                # Cek jika URL mengandung salah satu domain yang didukung.
+                # Extract the encoded URL from the CBMi parameter
+                match = re.search(r'CBMi([A-Za-z0-9-_=]+)', full_google_news_url)
+                if match:
+                    encoded_data = match.group(1)
+                    try:
+                        # Add padding if needed for Base64 URL safe decoding
+                        missing_padding = len(encoded_data) % 4
+                        if missing_padding != 0:
+                            encoded_data += '=' * (4 - missing_padding)
+                        
+                        # Use urlsafe_b64decode for the CBMi format
+                        decoded_url_bytes = base64.urlsafe_b64decode(encoded_data)
+                        
+                        # Try decoding with 'utf-8'. If it fails, try 'latin-1' or 'windows-1252'
+                        # Often, it's just plain UTF-8 for URLs. The error `0xae` might indicate
+                        # that the string is not a pure URL after decoding.
+                        # We'll just catch the error and move on.
+                        decoded_url = decoded_url_bytes.decode('utf-8')
+                        
+                        # Check if the decoded URL is from a supported domain
+                        if decoded_url.startswith('http'):
+                            for domain in supported_domains:
+                                if domain in decoded_url:
+                                    if decoded_url not in found_urls:
+                                        found_urls.append(decoded_url)
+                                        break # Found domain, break from inner loop
+                            if len(found_urls) >= num_results:
+                                break # Enough results, break from outer loop
+                    except (UnicodeDecodeError, Exception) as decode_error:
+                        # st.warning(f"Gagal decode Base64 atau format URL tidak valid: {encoded_data}. Error: {decode_error}")
+                        continue # Skip this link and try the next one
+            elif href and href.startswith('http'):
+                # This is a direct external URL. Check if it's from a supported domain.
                 for domain in supported_domains:
-                    if domain in full_url:
-                        if full_url not in found_urls: 
-                            found_urls.append(full_url)
-                        break 
+                    if domain in href:
+                        if href not in found_urls:
+                            found_urls.append(href)
+                            break
                 if len(found_urls) >= num_results:
                     break
-
-        # Jika opsi pertama (regex href) tidak menemukan cukup URL, coba cari berdasarkan class 'JtKRv'
-        # yang merupakan link ke judul artikel.
+        
+        # Fallback: Look for the 'JtKRv' class which is typically the main article title link
+        # This was identified in your original snippet as the actual article link.
         if len(found_urls) < num_results:
             for link_tag in soup.find_all('a', class_='JtKRv'):
-                potential_url = link_tag.get('href')
-                if potential_url:
-                    # Pastikan URLnya adalah URL absolut atau konversi dari relatif jika dimulai dengan ./read/CBMi
-                    if potential_url.startswith('./read/CBMi'):
-                        full_url = urllib.parse.urljoin("https://news.google.com/", potential_url)
-                    elif potential_url.startswith('http'): # Sudah URL absolut
-                        full_url = potential_url
-                    else: # Pola URL tidak dikenal, lewati
-                        continue
-                    
-                    # Kita perlu mendapatkan URL asli dari dalam URL Google News Read.
-                    # Biasanya, URL asli ada di dalam parameter 'url' setelah './articles/' atau semacamnya, 
-                    # atau terkadang di parameter CBMi yang dienkode base64.
-                    # Berdasarkan contoh HTML, href di `JtKRv` sudah berupa './read/CBMi<encoded_url>'
-                    # Kita perlu mengekstrak URL asli dari sana.
-                    
-                    # Mari kita coba asumsikan bahwa setelah konversi urllib.parse.urljoin,
-                    # full_url akan terlihat seperti: https://news.google.com/read/CBMi...
-                    # dan tujuan kita adalah link yang bukan dari news.google.com
-                    
-                    # Jika URL bukan dari news.google.com, dan ada di domain yang didukung
-                    if not "news.google.com" in full_url:
-                        for domain in supported_domains:
-                            if domain in full_url:
-                                if full_url not in found_urls: 
-                                    found_urls.append(full_url)
-                                break
-                        if len(found_urls) >= num_results:
-                            break
-                    # Jika itu adalah link internal Google News (misal: news.google.com/read),
-                    # kita perlu mengurai 'CBMi' untuk mendapatkan URL aslinya.
-                    else:
-                        match_cbm = re.search(r'CBMi([A-Za-z0-9-_=]+)', potential_url)
-                        if match_cbm:
-                            encoded_data = match_cbm.group(1)
-                            try:
-                                # Tambahkan padding jika diperlukan untuk Base64
-                                missing_padding = len(encoded_data) % 4
-                                if missing_padding != 0:
-                                    encoded_data += '='* (4 - missing_padding)
-                                decoded_url_bytes = base64.urlsafe_b64decode(encoded_data)
-                                decoded_url = decoded_url_bytes.decode('utf-8')
-                                
-                                # Cek jika URL yang sudah di-decode adalah dari domain yang didukung
-                                if decoded_url.startswith('http'):
-                                    for domain in supported_domains:
-                                        if domain in decoded_url:
-                                            if decoded_url not in found_urls:
-                                                found_urls.append(decoded_url)
+                href = link_tag.get('href')
+                if href and href.startswith('./read/CBMi'):
+                    full_google_news_url = urllib.parse.urljoin("https://news.google.com/", href)
+                    match = re.search(r'CBMi([A-Za-z0-9-_=]+)', full_google_news_url)
+                    if match:
+                        encoded_data = match.group(1)
+                        try:
+                            missing_padding = len(encoded_data) % 4
+                            if missing_padding != 0:
+                                encoded_data += '=' * (4 - missing_padding)
+                            decoded_url_bytes = base64.urlsafe_b64decode(encoded_data)
+                            decoded_url = decoded_url_bytes.decode('utf-8')
+                            if decoded_url.startswith('http'):
+                                for domain in supported_domains:
+                                    if domain in decoded_url:
+                                        if decoded_url not in found_urls:
+                                            found_urls.append(decoded_url)
                                             break
-                                    if len(found_urls) >= num_results:
-                                        break
-                            except Exception as decode_error:
-                                st.warning(f"Gagal decode Base64 dari {encoded_data}: {decode_error}")
-                                continue
-
-        # Tambahkan import base64 di awal file jika belum ada
-        # import base64
-        # (Pastikan ini ada di bagian atas file app.py bersama import lainnya)
-
-        # === END OF UPDATED SELECTOR LOGIC ===
+                                if len(found_urls) >= num_results:
+                                    break
+                        except (UnicodeDecodeError, Exception) as decode_error:
+                            # st.warning(f"Gagal decode Base64 (JtKRv) atau format URL tidak valid: {encoded_data}. Error: {decode_error}")
+                            continue
+                elif href and href.startswith('http'):
+                    for domain in supported_domains:
+                        if domain in href:
+                            if href not in found_urls:
+                                found_urls.append(href)
+                                break
+                    if len(found_urls) >= num_results:
+                        break
 
     except requests.exceptions.RequestException as e:
         status_code = response.status_code if 'response' in locals() else 'N/A'
