@@ -33,7 +33,7 @@ with st.container():
     col1, col2, col3 = st.columns([3, 1, 1])  # Ubah proporsi agar tombol tidak terlalu sempit
 
     with col1:
-        keyword = st.text_input("🔎 Kata Kunci", placeholder="misalnya: ekonomi pangan", value="ekonomi pangan")
+        keyword = st.text_input("🔎 Kata Kunci", placeholder="misalnya: ekonomi pangan", value="")
 
     with col2:
         max_pages = st.number_input("📄 Jumlah Halaman API", min_value=1, max_value=100, value=5)
