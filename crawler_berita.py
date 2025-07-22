@@ -53,7 +53,7 @@ def fetch_from_newsdata(keyword, max_pages=5):
     for page in range(1, max_pages + 1):
         url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=id&language=id&q={keyword}"
         response = requests.get(url)
-                if response.status_code != 200:
+        if response.status_code != 200:
             try:
                 # Ambil semua isi JSON error dan tampilkan detail
                 full_error = response.json()
