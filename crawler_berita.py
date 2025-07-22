@@ -53,12 +53,16 @@ def fetch_from_newsdata(keyword, max_pages=5):
     for page in range(1, max_pages + 1):
         url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=id&language=id&q={keyword}"
         response = requests.get(url)
-        if response.status_code != 200:
+                if response.status_code != 200:
             try:
-                error_detail = response.json().get("message", "")
-            except:
-                error_detail = response.text
-            return all_articles, f"Status code {response.status_code} – {error_detail}"
+                # Ambil semua isi JSON error dan tampilkan detail
+                full_error = response.json()
+                return all_articles, f"Status {response.status_code} – {full_error}"
+            except Exception as e:
+                # Jika bukan JSON, tampilkan plain text
+                return all_articles, f"Status {response.status_code} – {response.text}"
+        
+        # Normal response
         data = response.json()
         results = data.get("results", [])
         if not results:
@@ -72,6 +76,7 @@ def fetch_from_newsdata(keyword, max_pages=5):
                 "description": item.get("description")
             })
     return all_articles, None
+
 
 def fetch_links_duckduckgo(keyword):
     query = f"{keyword} site:cnnindonesia.com OR site:kompas.com"
