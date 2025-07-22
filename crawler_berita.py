@@ -7,7 +7,7 @@ from datetime import datetime
 import time
 import urllib.parse
 from io import BytesIO
-import base64 
+import base64
 
 # --- Fungsi Crawler Artikel ---
 # Fungsi-fungsi ini bertanggung jawab untuk mengambil detail artikel dari masing-masing situs berita.
@@ -238,7 +238,6 @@ def crawl_articles(urls):
         elif "cnnindonesia.com" in url:
             article_data = get_cnn_article(url)
         else:
-            # st.warning(f"URL tidak dikenali atau tidak didukung untuk crawling: {url}. Melewatkan.") # Dinonaktifkan untuk mengurangi output berlebihan
             pass # Melewatkan URL yang tidak didukung secara diam-diam
 
         if article_data:
@@ -248,10 +247,8 @@ def crawl_articles(urls):
     return pd.DataFrame(results)
 
 ---
-
 ## Fungsi Pencarian Artikel Berita (Menggunakan DuckDuckGo)
-
-Fungsi ini telah diperbarui untuk mencari URL artikel dari DuckDuckGo. Saya telah menyertakan dua strategi seleksi umum yang mungkin berlaku untuk DuckDuckGo: `result__a` dan pendekatan yang lebih umum dengan `h2 a` atau `a[href^="http"]` di dalam elemen hasil.
+---
 
 ```python
 def search_for_urls_from_keyword(keyword, num_results=5):
@@ -283,8 +280,7 @@ def search_for_urls_from_keyword(keyword, num_results=5):
         response.raise_for_status() 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Strategi 1: Mencari link dengan class 'result__a'
-        # Ini adalah class yang umum ditemukan untuk tautan utama di hasil DuckDuckGo.
+        # Strategi 1: Mencari link dengan class 'result__a' (paling umum untuk DuckDuckGo)
         for link_tag in soup.find_all('a', class_='result__a'):
             href = link_tag.get('href')
             if href and href.startswith('http'):
@@ -306,15 +302,15 @@ def search_for_urls_from_keyword(keyword, num_results=5):
                     break
         
         # Strategi 2 (Fallback/Alternatif): Mencari link di dalam elemen hasil pencarian yang lebih umum
-        # Jika Strategi 1 tidak menemukan cukup hasil, coba cari <a> di dalam <div> yang mewakili hasil.
-        # Atau cari link yang dimulai dengan 'http' di mana saja di halaman (bisa terlalu luas).
+        # Ini akan mencoba menemukan link jika Strategi 1 tidak cukup atau struktur HTML berubah.
         if len(found_urls) < num_results:
             # Mencari semua <a> tag yang memiliki atribut href dan dimulai dengan 'http'
-            # Ini adalah pendekatan yang lebih umum dan mungkin menangkap link jika struktur class berubah
+            # Serta memastikan itu bukan bagian dari UI DuckDuckGo (misal: link internal)
             for link_tag in soup.find_all('a', href=re.compile(r'^http')):
                 href = link_tag.get('href')
                 
                 # Filter tautan yang bukan merupakan bagian dari UI DuckDuckGo itu sendiri
+                # atau yang merupakan redirect internal DuckDuckGo yang sudah ditangani
                 if "duckduckgo.com" not in href or href.startswith("[https://duckduckgo.com/l/](https://duckduckgo.com/l/)"):
                     # Penanganan redirect internal DuckDuckGo (jika ada)
                     if href.startswith('[https://duckduckgo.com/l/](https://duckduckgo.com/l/)'):
@@ -353,13 +349,6 @@ def search_for_urls_from_keyword(keyword, num_results=5):
     
     return unique_urls[:num_results]
 
----
-
-## Antarmuka Pengguna Streamlit (UI)
-
-Bagian ini tetap sama.
-
-```python
 st.set_page_config(layout="wide", page_title="Crawler Artikel Berita Indonesia")
 
 st.title("🇮🇩 Crawler Artikel Berita Indonesia")
