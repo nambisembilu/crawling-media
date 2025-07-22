@@ -8,8 +8,11 @@ import time
 import urllib.parse
 from io import BytesIO
 
-# --- Fungsi Crawler Artikel (Biarkan Sama) ---
-# ... (kode fungsi get_detik_article, get_kompas_article, get_sindonews_article, get_liputan6_article, get_cnn_article tetap sama) ...
+# --- Fungsi Crawler Artikel (Biarkan Sama, sudah cukup robust dengan User-Agent) ---
+# (Pastikan semua fungsi get_xxx_article memiliki headers={'User-Agent': ...} di dalamnya)
+# ... (kode get_detik_article, get_kompas_article, get_sindonews_article, get_liputan6_article, get_cnn_article) ...
+# (Saya asumsikan bagian ini tetap sama dan sudah ada di file app.py Anda)
+
 def get_detik_article(url):
     try:
         response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'})
@@ -247,11 +250,10 @@ def crawl_articles(urls):
         if article_data:
             results.append(article_data)
         progress_bar.progress((i + 1) / len(urls))
-        time.sleep(1.5) # Perpanjang delay untuk lebih sopan ke website, terutama setelah scraping Google News
+        time.sleep(1.5) 
     return pd.DataFrame(results)
 
-
-# --- Fungsionalitas Pencarian (Diperbaiki) ---
+# --- Fungsionalitas Pencarian (Diperbarui) ---
 def search_for_urls_from_keyword(keyword, num_results=5):
     """
     Melakukan pencarian di Google News untuk mendapatkan URL artikel berdasarkan kata kunci.
@@ -278,45 +280,61 @@ def search_for_urls_from_keyword(keyword, num_results=5):
         response.raise_for_status() 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # === BAGIAN INI YANG PERLU DIUBAH BERDASARKAN INSPEKSI MANUAL ANDA ===
-        # Contoh hipotesis baru (Anda harus menyesuaikannya!):
-        # Asumsi: Setiap kartu artikel mungkin sekarang dibungkus oleh div dengan class tertentu,
-        # dan link artikel ada di dalam h3 di dalamnya.
-
-        # Paling umum, link artikel ada di dalam <a> dengan atribut href yang relatif
-        # Atau <a> dengan class tertentu
-        
-        # Contoh 1: Mencari <a> yang href-nya dimulai dengan "./articles/" (pola umum Google News)
-        # Seringkali, ini adalah yang paling stabil.
-        for link in soup.find_all('a', href=re.compile(r'^\./articles/')):
-            relative_url = link.get('href')
+        # === START OF UPDATED SELECTOR LOGIC ===
+        # Prioritaskan mencari link dengan pola href './read/CBMi'
+        # Pola ini lebih stabil karena merupakan format internal Google News untuk artikel yang sudah diringkas.
+        for link_tag in soup.find_all('a', href=re.compile(r'^\./read/CBMi')):
+            relative_url = link_tag.get('href')
             full_url = urllib.parse.urljoin("https://news.google.com/", relative_url)
             
-            if full_url.startswith('http'):
+            # Pastikan URL yang ditemukan adalah URL berita eksternal, bukan internal Google News
+            if full_url.startswith('http') and not "news.google.com/read" in full_url:
+                # URL artikel asli seringkali dienkode di dalam parameter URL Google News
+                # Kita perlu mengekstrak URL asli dari parameter CBMi.
+                # Contoh: ./read/CBMiUEFVX3lxTE8zS0hPRV9uMVkwQlhYWjFmZ1U0T2pHeE0zYi1Jc3RoeHpNNG1lOHZ4VGM1WVQ0STg4cDZBa2ZvRU1wdTlsbmIyVnVURTFHLUVV?hl=en-ID&gl=ID&ceid=ID%3Aen
+                # Parameter CBMi berisi URL yang dienkode Base64.
+                # Mari kita coba ambil URL asli dari data-n-cid atau jslog, atau cari cara lain.
+
+                # Berdasarkan inspeksi, link "JtKRv" adalah link langsung ke artikel
+                # Mari kita coba selektor yang lebih spesifik yang langsung ke URL artikel target.
+                # Kita akan mencoba menemukan tag 'a' dengan class "JtKRv"
+                # dan juga memiliki atribut 'href' yang bukan '/search' atau '/topics'.
+                
+                # Cek jika URL mengandung salah satu domain yang didukung.
                 for domain in supported_domains:
                     if domain in full_url:
                         if full_url not in found_urls: 
                             found_urls.append(full_url)
                         break 
-            if len(found_urls) >= num_results:
-                break
-        
-        # Contoh 2: Jika Contoh 1 tidak bekerja, coba cari elemen lain yang membungkus judul link.
-        # Misalnya, jika judulnya ada di h3, dan linknya di dalamnya:
-        if len(found_urls) < num_results:
-            for h3_tag in soup.find_all('h3'):
-                link_tag = h3_tag.find('a', href=True)
-                if link_tag:
-                    potential_url = link_tag.get('href')
-                    if potential_url:
-                        # Convert relative URL to absolute URL
-                        if potential_url.startswith('./articles/'):
-                            full_url = urllib.parse.urljoin("https://news.google.com/", potential_url)
-                        elif potential_url.startswith('http'): # Already absolute
-                            full_url = potential_url
-                        else: # Not a valid URL pattern we expect
-                            continue
+                if len(found_urls) >= num_results:
+                    break
 
+        # Jika opsi pertama (regex href) tidak menemukan cukup URL, coba cari berdasarkan class 'JtKRv'
+        # yang merupakan link ke judul artikel.
+        if len(found_urls) < num_results:
+            for link_tag in soup.find_all('a', class_='JtKRv'):
+                potential_url = link_tag.get('href')
+                if potential_url:
+                    # Pastikan URLnya adalah URL absolut atau konversi dari relatif jika dimulai dengan ./read/CBMi
+                    if potential_url.startswith('./read/CBMi'):
+                        full_url = urllib.parse.urljoin("https://news.google.com/", potential_url)
+                    elif potential_url.startswith('http'): # Sudah URL absolut
+                        full_url = potential_url
+                    else: # Pola URL tidak dikenal, lewati
+                        continue
+                    
+                    # Kita perlu mendapatkan URL asli dari dalam URL Google News Read.
+                    # Biasanya, URL asli ada di dalam parameter 'url' setelah './articles/' atau semacamnya, 
+                    # atau terkadang di parameter CBMi yang dienkode base64.
+                    # Berdasarkan contoh HTML, href di `JtKRv` sudah berupa './read/CBMi<encoded_url>'
+                    # Kita perlu mengekstrak URL asli dari sana.
+                    
+                    # Mari kita coba asumsikan bahwa setelah konversi urllib.parse.urljoin,
+                    # full_url akan terlihat seperti: https://news.google.com/read/CBMi...
+                    # dan tujuan kita adalah link yang bukan dari news.google.com
+                    
+                    # Jika URL bukan dari news.google.com, dan ada di domain yang didukung
+                    if not "news.google.com" in full_url:
                         for domain in supported_domains:
                             if domain in full_url:
                                 if full_url not in found_urls: 
@@ -324,28 +342,38 @@ def search_for_urls_from_keyword(keyword, num_results=5):
                                 break
                         if len(found_urls) >= num_results:
                             break
-        
-        # Contoh 3 (JIKA KEDUA DI ATAS GAGAL): Coba cari <a> dengan class spesifik dari inspeksi Anda.
-        # GANTILAH 'CLASS_YANG_ANDA_TEMUKAN_DI_INSPEKSI' dengan nama kelas yang Anda temukan
-        # if len(found_urls) < num_results:
-        #     for link in soup.find_all('a', class_='CLASS_YANG_ANDA_TEMUKAN_DI_INSPEKSI'):
-        #         potential_url = link.get('href')
-        #         if potential_url:
-        #             if potential_url.startswith('./articles/'):
-        #                 full_url = urllib.parse.urljoin("https://news.google.com/", potential_url)
-        #             elif potential_url.startswith('http'):
-        #                 full_url = potential_url
-        #             else:
-        #                 continue
-                    
-        #             for domain in supported_domains:
-        #                 if domain in full_url:
-        #                     if full_url not in found_urls:
-        #                         found_urls.append(full_url)
-        #                     break
-        #             if len(found_urls) >= num_results:
-        #                 break
+                    # Jika itu adalah link internal Google News (misal: news.google.com/read),
+                    # kita perlu mengurai 'CBMi' untuk mendapatkan URL aslinya.
+                    else:
+                        match_cbm = re.search(r'CBMi([A-Za-z0-9-_=]+)', potential_url)
+                        if match_cbm:
+                            encoded_data = match_cbm.group(1)
+                            try:
+                                # Tambahkan padding jika diperlukan untuk Base64
+                                missing_padding = len(encoded_data) % 4
+                                if missing_padding != 0:
+                                    encoded_data += '='* (4 - missing_padding)
+                                decoded_url_bytes = base64.urlsafe_b64decode(encoded_data)
+                                decoded_url = decoded_url_bytes.decode('utf-8')
+                                
+                                # Cek jika URL yang sudah di-decode adalah dari domain yang didukung
+                                if decoded_url.startswith('http'):
+                                    for domain in supported_domains:
+                                        if domain in decoded_url:
+                                            if decoded_url not in found_urls:
+                                                found_urls.append(decoded_url)
+                                            break
+                                    if len(found_urls) >= num_results:
+                                        break
+                            except Exception as decode_error:
+                                st.warning(f"Gagal decode Base64 dari {encoded_data}: {decode_error}")
+                                continue
 
+        # Tambahkan import base64 di awal file jika belum ada
+        # import base64
+        # (Pastikan ini ada di bagian atas file app.py bersama import lainnya)
+
+        # === END OF UPDATED SELECTOR LOGIC ===
 
     except requests.exceptions.RequestException as e:
         status_code = response.status_code if 'response' in locals() else 'N/A'
@@ -360,7 +388,7 @@ def search_for_urls_from_keyword(keyword, num_results=5):
         **Peringatan Penting:** Tidak ada URL yang ditemukan dari situs berita yang didukung untuk kata kunci **'{keyword}'**.
         Ini mungkin karena:
         * Tidak ada artikel yang sangat relevan dari situs yang didukung muncul di Google News.
-        * **Struktur HTML Google News telah berubah signifikan lagi.** Kode **`search_for_urls_from_keyword`** perlu diperbarui dengan selektor yang baru yang Anda temukan dari **inspeksi manual**.
+        * **Struktur HTML Google News telah berubah signifikan lagi.** Kode **`search_for_urls_from_keyword`** mungkin perlu diperbarui kembali dengan selektor yang baru yang Anda temukan dari **inspeksi manual**.
         * Permintaan Anda mungkin diblokir sementara oleh Google karena aktivitas scraping yang terdeteksi.
         """)
         st.info("Saran: Coba kata kunci yang lebih umum (misal: 'ekonomi Indonesia', 'berita politik') atau kurangi jumlah artikel yang diminta.")
