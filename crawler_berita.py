@@ -5,11 +5,11 @@ import pandas as pd
 import re
 from datetime import datetime
 import time
+import urllib.parse
 from io import BytesIO
-import urllib.parse # Untuk encode kata kunci
 
-# --- Fungsi Crawler Artikel ---
-# Menambahkan header User-Agent ke setiap permintaan untuk simulasi browser
+# --- Fungsi Crawler Artikel (Biarkan Sama) ---
+# ... (kode fungsi get_detik_article, get_kompas_article, get_sindonews_article, get_liputan6_article, get_cnn_article tetap sama) ...
 def get_detik_article(url):
     try:
         response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'})
@@ -221,7 +221,6 @@ def get_cnn_article(url):
         st.error(f"Error parsing CNN Indonesia article {url}: {e}")
         return None
 
-
 def crawl_articles(urls):
     results = []
     if not urls:
@@ -251,6 +250,7 @@ def crawl_articles(urls):
         time.sleep(1.5) # Perpanjang delay untuk lebih sopan ke website, terutama setelah scraping Google News
     return pd.DataFrame(results)
 
+
 # --- Fungsionalitas Pencarian (Diperbaiki) ---
 def search_for_urls_from_keyword(keyword, num_results=5):
     """
@@ -262,13 +262,11 @@ def search_for_urls_from_keyword(keyword, num_results=5):
         "detik.com", "kompas.com", "sindonews.com", "liputan6.com", "cnnindonesia.com"
     ]
     
-    # Encode kata kunci untuk URL
     encoded_keyword = urllib.parse.quote_plus(keyword)
-    # URL Google News dengan parameter pencarian dan bahasa Indonesia
     search_url = f"https://news.google.com/search?q={encoded_keyword}&hl=id&gl=ID&ceid=ID:id"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9,id;q=0.8', # Prioritaskan bahasa Inggris, lalu Indonesia
+        'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
         'Connection': 'keep-alive',
@@ -276,70 +274,65 @@ def search_for_urls_from_keyword(keyword, num_results=5):
     
     found_urls = []
     try:
-        response = requests.get(search_url, headers=headers, timeout=15) # Tingkatkan timeout
+        response = requests.get(search_url, headers=headers, timeout=15)
         response.raise_for_status() 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Coba identifikasi tautan artikel lebih fleksibel
-        # Tautan artikel Google News sering berada di dalam tag <a> yang memiliki href yang tidak kosong,
-        # dan merupakan bagian dari "kartu" berita.
-        # Biasanya, mereka memiliki struktur seperti <a href="./articles/..." ...>
+        # === PERBAIKAN UTAMA DI SINI ===
+        # Strategi baru: Cari semua elemen 'article' yang umumnya membungkus item berita.
+        # Kemudian di dalam setiap 'article', cari tag 'a' yang merupakan link utama ke berita.
         
-        # Pendekatan 1: Cari semua link yang href-nya dimulai dengan "./articles/"
-        for link in soup.find_all('a', href=re.compile(r'^\./articles/')):
-            relative_url = link.get('href')
-            full_url = urllib.parse.urljoin("https://news.google.com/", relative_url)
-            
-            # Tambahkan hanya jika dari domain yang didukung
-            for domain in supported_domains:
-                if domain in full_url:
-                    if full_url not in found_urls: # Hindari duplikasi langsung
-                        found_urls.append(full_url)
-                        break
-            if len(found_urls) >= num_results:
-                break
-        
-        # Pendekatan 2 (jika Pendekatan 1 kurang berhasil): Cari semua <a> yang punya role="heading" atau <h3>
-        # dan cek parent-nya atau linknya
-        if len(found_urls) < num_results: # Lanjutkan jika belum cukup
-            for h3_tag in soup.find_all('h3'):
-                link_tag = h3_tag.find('a', href=True)
-                if link_tag:
-                    full_url = link_tag.get('href')
-                    if full_url and full_url.startswith('./articles/'):
-                        full_url = urllib.parse.urljoin("https://news.google.com/", full_url)
+        articles = soup.find_all('article')
+        if not articles:
+            st.warning("Tidak menemukan tag <article> di halaman Google News. Struktur mungkin sangat berubah.")
 
-                    if full_url and full_url.startswith('http'):
+        for article in articles:
+            # Coba cari link utama di dalam tag <a> dengan pola tertentu, atau yang merupakan heading
+            # Google News sering menggunakan <a class="DY5T1d" ...>
+            link_tag = article.find('a', class_=re.compile(r'DY5T1d|JtKR7c|Wwrf6b')) # Menambahkan beberapa class umum
+            
+            if not link_tag: # Jika tidak ditemukan dengan class spesifik, coba cari link utama di h3
+                h3_tag = article.find('h3')
+                if h3_tag:
+                    link_tag = h3_tag.find('a', href=True)
+
+            if link_tag:
+                relative_url = link_tag.get('href')
+                if relative_url:
+                    full_url = urllib.parse.urljoin("https://news.google.com/", relative_url)
+                    
+                    # Pastikan URL adalah link absolut dan berasal dari domain yang didukung
+                    if full_url.startswith('http'):
                         for domain in supported_domains:
                             if domain in full_url:
-                                if full_url not in found_urls:
+                                if full_url not in found_urls: 
                                     found_urls.append(full_url)
-                                    break
+                                break # Keluar dari loop domain jika sudah cocok
+                    
                     if len(found_urls) >= num_results:
-                        break
+                        break # Hentikan jika sudah mencapai jumlah hasil yang diinginkan
 
     except requests.exceptions.RequestException as e:
-        st.error(f"Error saat mencari URL di Google News: {e}. Periksa koneksi internet Anda atau coba lagi nanti. Server mungkin memblokir permintaan.")
-        st.info(f"Status Code: {response.status_code if 'response' in locals() else 'N/A'}")
+        status_code = response.status_code if 'response' in locals() else 'N/A'
+        st.error(f"Error saat mencari URL di Google News (Status: {status_code}): {e}. Periksa koneksi internet Anda, coba lagi nanti, atau IP Anda mungkin diblokir.")
     except Exception as e:
-        st.error(f"Terjadi kesalahan tidak terduga saat parsing hasil pencarian Google News: {e}")
+        st.error(f"Terjadi kesalahan tidak terduga saat parsing hasil pencarian Google News: {e}. Coba periksa struktur HTML Google News secara manual.")
 
-    # Hapus duplikat dan pastikan jumlahnya sesuai permintaan
     unique_urls = list(dict.fromkeys(found_urls)) 
     
     if not unique_urls:
         st.warning(f"""
         Tidak ada URL yang ditemukan dari situs berita yang didukung untuk kata kunci **'{keyword}'**.
         Ini mungkin karena:
-        * Tidak ada artikel yang sangat relevan muncul di Google News dari situs yang didukung.
-        * Struktur HTML Google News telah berubah secara signifikan (perlu update kode `search_for_urls_from_keyword`).
-        * Permintaan Anda mungkin diblokir sementara oleh Google.
+        * **Tidak ada artikel relevan** dari situs yang didukung muncul di Google News untuk kata kunci ini.
+        * **Struktur HTML Google News telah berubah lagi** (perlu update kode `search_for_urls_from_keyword` dengan selektor yang baru).
+        * **Permintaan Anda mungkin diblokir sementara oleh Google** karena aktivitas scraping.
         """)
-        st.info("Coba kata kunci yang lebih umum (misal: 'ekonomi Indonesia') atau kurangi jumlah artikel yang diminta.")
+        st.info("Saran: Coba kata kunci yang lebih umum (misal: 'ekonomi Indonesia', 'berita politik') atau kurangi jumlah artikel yang diminta.")
     
     return unique_urls[:num_results]
 
-# --- Konfigurasi Streamlit UI ---
+# --- Konfigurasi Streamlit UI (Tetap Sama) ---
 st.set_page_config(layout="wide", page_title="Crawler Artikel Berita Indonesia")
 
 st.title("🇮🇩 Crawler Artikel Berita Indonesia")
@@ -363,19 +356,16 @@ if st.button("Cari dan Mulai Crawling"):
         st.warning("Mohon masukkan kata kunci.")
     else:
         with st.spinner("Mencari URL dan crawling artikel... Mohon tunggu, proses ini mungkin memakan waktu beberapa detik per artikel."):
-            # 1. Cari URL berdasarkan kata kunci
             urls_to_crawl = search_for_urls_from_keyword(keyword_input, num_articles_to_crawl)
             
             if urls_to_crawl:
                 st.success(f"Ditemukan {len(urls_to_crawl)} URL yang relevan. Memulai crawling...")
-                # 2. Lakukan crawling pada URL yang ditemukan
                 df_articles = crawl_articles(urls_to_crawl)
 
                 if not df_articles.empty:
                     st.subheader("Hasil Crawling")
                     st.dataframe(df_articles)
 
-                    # Bagian untuk ekspor ke XLSX
                     excel_buffer = BytesIO()
                     df_articles.to_excel(excel_buffer, index=False, engine='openpyxl')
                     excel_buffer.seek(0)
