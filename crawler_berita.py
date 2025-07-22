@@ -250,7 +250,6 @@ def crawl_articles(urls):
 ## Fungsi Pencarian Artikel Berita (Menggunakan DuckDuckGo)
 ---
 
-```python
 def search_for_urls_from_keyword(keyword, num_results=5):
     """
     Melakukan pencarian di DuckDuckGo untuk mendapatkan URL artikel berdasarkan kata kunci.
