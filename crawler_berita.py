@@ -14,7 +14,6 @@ SERPAPI_KEY = 'ISI_API_KEY_SERPAPI_ANDA'  # Ganti dengan API key asli dari https
 # Validasi API Key
 if not SERPAPI_KEY.strip():
     st.error("❌ Anda belum mengisi API Key SerpApi. Daftar di https://serpapi.com/")
-    st.stop()
 
 # ---------------------------
 # KONFIGURASI STREAMLIT
