@@ -113,7 +113,7 @@ with st.sidebar:
     st.header("Pengaturan Pencarian")
     provider = st.radio("Penyedia", ["Google CSE", "SerpApi"])
     query = st.text_input("Kata kunci (mis. `pemilu site:kompas.com`)")
-    num_results = st.slider("Jumlah hasil", 1, 50, 10)
+    num_results = st.slider("Jumlah hasil", 5, 1000, 10)
     hl = st.text_input("HL (bahasa)", value="id")
     gl = st.text_input("GL (geolokasi)", value="id")
 
