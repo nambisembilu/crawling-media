@@ -1,7 +1,7 @@
 # google_cse_search_split_streamlit.py
 # Streamlit app to fetch Google Search results using ONLY Google Custom Search JSON API (CSE)
-# with query splitting by date ranges (before:/after:).
-# Usage: streamlit run google_cse_search_split_streamlit.py
+# with query splitting by date ranges (before:/after:). Results are persisted in session_state
+# so UI doesn't clear when clicking download buttons.
 
 import re
 import io
@@ -35,43 +35,32 @@ def to_dataframe(items: List[Dict]) -> pd.DataFrame:
         if c not in df.columns:
             df[c] = ""
     df = df[cols]
-    # de-duplicate by link
     df = df.drop_duplicates(subset=["link"]).reset_index(drop=True)
     return df
 
 def export_buttons(df: pd.DataFrame, filename_prefix: str):
     csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "⬇️ Unduh CSV",
-        data=csv,
-        file_name=f"{filename_prefix}.csv",
-        mime="text/csv",
-    )
+    st.download_button("⬇️ Unduh CSV", data=csv,
+        file_name=f"{filename_prefix}.csv", mime="text/csv", key="download_csv")
     try:
         import xlsxwriter
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
             df.to_excel(writer, index=False, sheet_name="Results")
-        st.download_button(
-            "⬇️ Unduh Excel",
-            data=buffer.getvalue(),
+        st.download_button("⬇️ Unduh Excel", data=buffer.getvalue(),
             file_name=f"{filename_prefix}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+            key="download_xlsx")
     except Exception:
         st.info("Modul xlsxwriter tidak tersedia. Gunakan CSV atau install xlsxwriter.")
 
 def daterange_chunks(start: date, end: date, granularity: str) -> List[Tuple[date, date, str]]:
-    """Split [start, end] into ranges by granularity: 'Monthly', 'Weekly', or 'Daily'.
-       Returns list of (chunk_start, chunk_end, label). chunk_end is inclusive.
-    """
     chunks = []
     if start > end:
         return chunks
     if granularity == "Monthly":
         cur = date(start.year, start.month, 1)
         while cur <= end:
-            # end of month
             if cur.month == 12:
                 nxt = date(cur.year + 1, 1, 1)
             else:
@@ -103,17 +92,14 @@ def daterange_chunks(start: date, end: date, granularity: str) -> List[Tuple[dat
 # Google CSE
 # ---------------------------
 
-def search_cse(api_key: str, cx: str, query: str, num: int = 10, start: int = 1, gl: str = "id", hl: str = "id") -> List[Dict]:
-    """Fetch up to 10 results for a given page using Google CSE"""
+def search_cse(api_key: str, cx: str, query: str, num: int = 10, start: int = 1,
+               gl: str = "id", hl: str = "id") -> List[Dict]:
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
-        "key": api_key,
-        "cx": cx,
-        "q": query,
-        "num": min(max(num, 1), 10),  # Google CSE: 1..10 per request
+        "key": api_key, "cx": cx, "q": query,
+        "num": min(max(num, 1), 10),
         "start": max(start, 1),
-        "gl": gl,
-        "hl": hl,
+        "gl": gl, "hl": hl,
     }
     r = requests.get(url, params=params, timeout=25)
     if r.status_code != 200:
@@ -129,12 +115,11 @@ def search_cse(api_key: str, cx: str, query: str, num: int = 10, start: int = 1,
         })
     return items
 
-def search_cse_paginated(api_key: str, cx: str, query: str, total: int, gl: str = "id", hl: str = "id") -> List[Dict]:
-    """Paginate CSE requests up to 100 results (Google limit per query)."""
-    total = max(1, min(int(total), 100))  # hard cap at 100
+def search_cse_paginated(api_key: str, cx: str, query: str, total: int,
+                         gl: str = "id", hl: str = "id") -> List[Dict]:
+    total = max(1, min(int(total), 100))
     collected = []
-    start_idx = 1
-    remaining = total
+    start_idx, remaining = 1, total
     while remaining > 0:
         batch = min(remaining, 10)
         items = search_cse(api_key, cx, query, num=batch, start=start_idx, gl=gl, hl=hl)
@@ -143,23 +128,23 @@ def search_cse_paginated(api_key: str, cx: str, query: str, total: int, gl: str 
         collected.extend(items)
         remaining -= len(items)
         start_idx += len(items)
-        time.sleep(0.25)  # polite delay
+        time.sleep(0.25)
     return collected
 
 def build_query_with_dates(base_query: str, d_start: date, d_end: date) -> str:
-    """Use Google's before:/after: operators. Inclusive range via before:(end+1)."""
     qs = base_query.strip()
     qs += f' after:{d_start.strftime("%Y-%m-%d")} before:{(d_end + timedelta(days=1)).strftime("%Y-%m-%d")}'
     return qs
 
-def run_split_search(api_key: str, cx: str, base_query: str, start_date: date, end_date: date,
-                     granularity: str, per_shard_limit: int, gl: str, hl: str) -> List[Dict]:
+def run_split_search(api_key: str, cx: str, base_query: str,
+                     start_date: date, end_date: date,
+                     granularity: str, per_shard_limit: int,
+                     gl: str, hl: str) -> List[Dict]:
     shards = daterange_chunks(start_date, end_date, granularity)
     all_items: List[Dict] = []
     for (s, e, label) in stqdm(shards, desc="Memproses shard tanggal"):
         q = build_query_with_dates(base_query, s, e)
         items = search_cse_paginated(api_key, cx, q, total=per_shard_limit, gl=gl, hl=hl)
-        # attach shard info
         for it in items:
             it["shard_label"] = label
             it["shard_start"] = s.isoformat()
@@ -168,101 +153,64 @@ def run_split_search(api_key: str, cx: str, base_query: str, start_date: date, e
     return all_items
 
 # ---------------------------
-# Simple tqdm for Streamlit (generator version)
+# Simple tqdm for Streamlit
 # ---------------------------
 
-def stqdm(iterable, desc: str = "Progress"):
+def stqdm(iterable, desc="Progress"):
     total = len(iterable)
-    # For Streamlit >=1.31, progress has 'text' parameter; fallback if not available
-    try:
-        progress = st.progress(0, text=f"{desc}: 0/{total}")
-        use_text = True
-    except TypeError:
-        status = st.empty()
-        progress = st.progress(0)
-        status.write(f"{desc}: 0/{total}")
-        use_text = False
+    progress = st.progress(0, text=f"{desc}: 0/{total}")
+    for i, val in enumerate(iterable, start=1):
+        progress.progress(i/total, text=f"{desc}: {i}/{total}")
+        yield val
+    progress.empty()
 
-    try:
-        for i, val in enumerate(iterable, start=1):
-            if use_text:
-                progress.progress(i / total, text=f"{desc}: {i}/{total}")
-            else:
-                status.write(f"{desc}: {i}/{total}")
-                progress.progress(i / total)
-            yield val
-    finally:
-        try:
-            progress.empty()  # available on newer versions
-        except Exception:
-            pass
+# ---------------------------
+# State init
+# ---------------------------
+
+if "results_df" not in st.session_state:
+    st.session_state.results_df = pd.DataFrame()
+if "raw_items" not in st.session_state:
+    st.session_state.raw_items = []
+if "filename_prefix" not in st.session_state:
+    st.session_state.filename_prefix = "google_cse_split_results"
 
 # ---------------------------
 # UI
 # ---------------------------
 
 st.title(APP_TITLE)
-st.caption("Ambil lebih dari 100 hasil **dengan memecah query per rentang tanggal** (harian/mingguan/bulanan). Setiap shard (rentang) bisa mengambil hingga 100 hasil (limit Google CSE per query).")
+st.caption("Ambil lebih dari 100 hasil dengan memecah query per rentang tanggal.")
 
 with st.sidebar:
-    st.header("Pengaturan Pencarian")
-    base_query = st.text_input("Kata kunci / operator (mis. `AI site:kompas.com`)")
-    colq1, colq2 = st.columns(2)
-    with colq1:
+    with st.form("controls"):
+        base_query = st.text_input("Kata kunci (mis. `AI site:kompas.com`)")
         hl = st.text_input("HL (bahasa)", value="id")
-    with colq2:
-        gl = st.text_input("GL (geolokasi)", value="id")
+        gl = st.text_input("GL (geo)", value="id")
+        start_date = st.date_input("Mulai", value=date.today() - timedelta(days=30))
+        end_date = st.date_input("Selesai", value=date.today())
+        granularity = st.selectbox("Granularitas", ["Monthly","Weekly","Daily"], index=0)
+        per_shard_limit = st.number_input("Maks hasil/shard (≤100)", 1, 100, 50)
+        api_key = st.text_input("CSE API Key", type="password")
+        cx = st.text_input("CSE Search Engine ID (cx)", type="password")
+        submitted = st.form_submit_button("Jalankan Pencarian")
 
-    st.markdown("---")
-    st.subheader("Rentang Tanggal")
-    today = date.today()
-    default_start = today.replace(day=1) - timedelta(days=30)  # ~2 bulan terakhir
-    start_date = st.date_input("Mulai", value=default_start)
-    end_date = st.date_input("Selesai", value=today)
-    granularity = st.selectbox("Granularitas shard", ["Monthly", "Weekly", "Daily"], index=0, help="Semakin kecil (Daily) semakin banyak shard dan request.")
-
-    st.markdown("---")
-    per_shard_limit = st.number_input("Maks hasil per shard (cap 100)", min_value=1, max_value=100, value=50, step=1, help="Google CSE maksimal 100 per query.")
-    st.caption("Total hasil ≈ jumlah_shard × per_shard_limit (setelah deduplikasi bisa berkurang).")
-
-    st.markdown("---")
-    api_key = st.text_input("CSE API Key", type="password")
-    cx = st.text_input("CSE Search Engine ID (cx)", type="password")
-
-    run = st.button("Jalankan Pencarian")
-
-st.markdown("""
-**Cara kerja**
-- Aplikasi memecah rentang tanggal menjadi **shard** (harian/mingguan/bulanan).
-- Untuk setiap shard, query ditambah operator: `after:YYYY-MM-DD before:YYYY-MM-DD`.
-- Tiap shard diambil maksimal *per_shard_limit* hasil (maks 100).  
-- Semua hasil digabung lalu di-*deduplicate* berdasarkan link.
-""")
-
-if run:
-    if not base_query:
-        st.warning("Masukkan kata kunci terlebih dahulu.")
-        st.stop()
-    if not api_key or not cx:
-        st.error("Isi **CSE API Key** dan **CX** terlebih dahulu.")
-        st.stop()
-    if start_date > end_date:
-        st.error("Tanggal mulai tidak boleh melebihi tanggal selesai.")
-        st.stop()
-
-    with st.spinner("Mengambil data..."):
-        items = run_split_search(api_key, cx, base_query, start_date, end_date, granularity, per_shard_limit, gl or "id", hl or "id")
+if submitted:
+    if base_query and api_key and cx and start_date <= end_date:
+        items = run_split_search(api_key, cx, base_query, start_date, end_date,
+                                 granularity, per_shard_limit, gl, hl)
         df = to_dataframe(items)
-
-    st.success(f"Selesai. Ditemukan {len(df)} link unik dari {len(items)} total hasil (sebelum deduplikasi).")
-    st.dataframe(df, use_container_width=True)
-
-    # Export
-    if not df.empty:
+        st.session_state.results_df = df
+        st.session_state.raw_items = items
         safe_name = re.sub(r"\W+", "_", f"{base_query}_{start_date}_{end_date}".lower())
-        export_buttons(df, filename_prefix=f"google_cse_split_{safe_name}")
+        st.session_state.filename_prefix = f"google_cse_split_{safe_name}"
 
-    with st.expander("Lihat JSON mentah"):
+if not st.session_state.results_df.empty:
+    df, items = st.session_state.results_df, st.session_state.raw_items
+    st.success(f"Selesai. Ditemukan {len(df)} link unik dari {len(items)} total hasil.")
+    st.dataframe(df, use_container_width=True)
+    export_buttons(df, filename_prefix=st.session_state.filename_prefix)
+    with st.expander("JSON mentah"):
         st.code(json.dumps(items, ensure_ascii=False, indent=2))
 else:
     st.info("Isi kata kunci, rentang tanggal, API key & CX, lalu klik **Jalankan Pencarian**.")
