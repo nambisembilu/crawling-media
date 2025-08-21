@@ -7,8 +7,7 @@ import re
 import io
 import json
 import time
-import math
-from datetime import datetime, date, timedelta
+from datetime import date, timedelta
 from typing import List, Dict, Tuple
 
 import requests
@@ -83,7 +82,6 @@ def daterange_chunks(start: date, end: date, granularity: str) -> List[Tuple[dat
             chunks.append((chunk_start, chunk_end, label))
             cur = nxt
     elif granularity == "Weekly":
-        # week chunks starting on start's day
         cur = start
         while cur <= end:
             chunk_start = cur
@@ -149,8 +147,7 @@ def search_cse_paginated(api_key: str, cx: str, query: str, total: int, gl: str 
     return collected
 
 def build_query_with_dates(base_query: str, d_start: date, d_end: date) -> str:
-    """Use Google's before:/after: operators. Inclusive range."""
-    # Format YYYY-MM-DD
+    """Use Google's before:/after: operators. Inclusive range via before:(end+1)."""
     qs = base_query.strip()
     qs += f' after:{d_start.strftime("%Y-%m-%d")} before:{(d_end + timedelta(days=1)).strftime("%Y-%m-%d")}'
     return qs
@@ -171,21 +168,34 @@ def run_split_search(api_key: str, cx: str, base_query: str, start_date: date, e
     return all_items
 
 # ---------------------------
-# Simple tqdm for Streamlit
+# Simple tqdm for Streamlit (generator version)
 # ---------------------------
 
-from contextlib import contextmanager
-
-@contextmanager
-def stqdm(iterable, desc="Progress"):
+def stqdm(iterable, desc: str = "Progress"):
     total = len(iterable)
-    progress = st.progress(0, text=f"{desc}: 0/{total}")
+    # For Streamlit >=1.31, progress has 'text' parameter; fallback if not available
+    try:
+        progress = st.progress(0, text=f"{desc}: 0/{total}")
+        use_text = True
+    except TypeError:
+        status = st.empty()
+        progress = st.progress(0)
+        status.write(f"{desc}: 0/{total}")
+        use_text = False
+
     try:
         for i, val in enumerate(iterable, start=1):
+            if use_text:
+                progress.progress(i / total, text=f"{desc}: {i}/{total}")
+            else:
+                status.write(f"{desc}: {i}/{total}")
+                progress.progress(i / total)
             yield val
-            progress.progress(i/total, text=f"{desc}: {i}/{total}")
     finally:
-        progress.empty()
+        try:
+            progress.empty()  # available on newer versions
+        except Exception:
+            pass
 
 # ---------------------------
 # UI
@@ -206,7 +216,7 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Rentang Tanggal")
     today = date.today()
-    default_start = today.replace(day=1) - timedelta(days=30)  # default: kira-kira 2 bulan terakhir
+    default_start = today.replace(day=1) - timedelta(days=30)  # ~2 bulan terakhir
     start_date = st.date_input("Mulai", value=default_start)
     end_date = st.date_input("Selesai", value=today)
     granularity = st.selectbox("Granularitas shard", ["Monthly", "Weekly", "Daily"], index=0, help="Semakin kecil (Daily) semakin banyak shard dan request.")
