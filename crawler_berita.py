@@ -1,404 +1,360 @@
-import streamlit as st
+# news_crawler_streamlit.py
+# Streamlit app to crawl multiple Indonesian news index pages and filter by keyword
+# Author: ChatGPT (Satibi's helper)
+# Usage: streamlit run news_crawler_streamlit.py
+
+import re
+import time
+import math
+import random
+import traceback
+import concurrent.futures as futures
+from datetime import datetime
+from typing import List, Dict, Optional
+
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import re
-from datetime import datetime
-import time
-import urllib.parse
-from io import BytesIO
-import base64
+import streamlit as st
 
-# --- Fungsi Crawler Artikel ---
-# Fungsi-fungsi ini bertanggung jawab untuk mengambil detail artikel dari masing-masing situs berita.
-# Pastikan semua fungsi ini memiliki headers={'User-Agent': ...} di dalamnya untuk menghindari pemblokiran.
+# ---------------------------
+# HTTP Session & Helpers
+# ---------------------------
 
-def get_detik_article(url):
+DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/126.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "id,en;q=0.9",
+}
+
+SESSION = requests.Session()
+SESSION.headers.update(DEFAULT_HEADERS)
+TIMEOUT = 15  # seconds
+
+def safe_get(url: str) -> Optional[requests.Response]:
     try:
-        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'})
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
+        resp = SESSION.get(url, timeout=TIMEOUT)
+        if resp.status_code == 200:
+            return resp
+        return None
+    except Exception:
+        return None
 
-        title_tag = soup.find('h1', class_='detail__title')
-        title = title_tag.get_text(strip=True) if title_tag else 'N/A'
+def clean_text(x: str) -> str:
+    if not x:
+        return ""
+    return re.sub(r"\s+", " ", x).strip()
 
-        date_tag = soup.find('div', class_='detail__date')
-        date_text = date_tag.get_text(strip=True) if date_tag else 'N/A'
-        match = re.search(r'(\d{1,2} \w{3} \d{4} \d{2}:\d{2})', date_text)
-        if match:
-            date_str = match.group(1)
-            month_map = {
-                'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'Mei': '05', 'Jun': '06',
-                'Jul': '07', 'Agu': '08', 'Sep': '09', 'Okt': '10', 'Nov': '11', 'Des': '12'
-            }
-            for abbr, num in month_map.items():
-                date_str = date_str.replace(abbr, num)
-            try:
-                parsed_date = datetime.strptime(date_str, '%d %m %Y %H:%M')
-                date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                date = date_text
+def kw_match(s: str, kw: str) -> bool:
+    return kw.lower() in s.lower()
+
+def polite_delay(min_s=0.3, max_s=0.9):
+    time.sleep(random.uniform(min_s, max_s))
+
+# ---------------------------
+# Site-specific Parsers
+# ---------------------------
+
+def parse_detik_index(html: str) -> List[Dict]:
+    soup = BeautifulSoup(html, "html.parser")
+    items = []
+    # detik has articles in a list with class 'media__title' or 'list-content__item'
+    for a in soup.select("article a, .media__title a, .list-content__item a"):
+        href = a.get("href") or ""
+        title = clean_text(a.get_text())
+        if not href or not title:
+            continue
+        # Filter out non-article links
+        if "news.detik.com" not in href:
+            continue
+        items.append({"title": title, "url": href})
+    # try to fetch timestamps if present
+    for card in soup.select("article"):
+        a = card.find("a")
+        if not a:
+            continue
+        href = a.get("href") or ""
+        if not href:
+            continue
+        time_el = card.select_one("span, time")
+        if time_el:
+            ts = clean_text(time_el.get_text())
         else:
-            date = date_text
+            ts = ""
+        for it in items:
+            if it["url"] == href and "time" not in it:
+                it["time"] = ts
+    return items
 
-        content_div = soup.find('div', class_='detail__body-text')
-        paragraphs = content_div.find_all('p') if content_div else []
-        content = "\n".join([p.get_text(strip=True) for p in paragraphs])
-        content = re.sub(r'Baca juga:.*', '', content, flags=re.DOTALL)
-        content = re.sub(r'Simak Video.*', '', content, flags=re.DOTALL)
-        content = content.strip()
+def parse_liputan6_index(html: str) -> List[Dict]:
+    soup = BeautifulSoup(html, "html.parser")
+    items = []
+    for card in soup.select("article a, .articles--rows--item a, .articles--iridescent-list--text-item__title-link"):
+        href = card.get("href") or ""
+        title = clean_text(card.get_text())
+        if not href or not title:
+            continue
+        if "liputan6.com" not in href:
+            continue
+        items.append({"title": title, "url": href})
+    # timestamps
+    for card in soup.select("time, .articles--rows--item time"):
+        ts = clean_text(card.get_text())
+        # Won't try to map each; leave blank if unknown
+    return items
 
-        return {'url': url, 'title': title, 'date': date, 'content': content}
-    except requests.exceptions.RequestException as e:
-        return None
-    except Exception as e:
-        return None
+def parse_kompas_index(html: str) -> List[Dict]:
+    soup = BeautifulSoup(html, "html.parser")
+    items = []
+    # kompas indeks usually has .article__link or .article__list__title
+    for a in soup.select("a.article__link, a.article__list__title, .latest__item a, .articleList a"):
+        href = a.get("href") or ""
+        title = clean_text(a.get_text())
+        if not href or not title:
+            continue
+        if "kompas.com" not in href:
+            continue
+        # only news site is being indexed (ignore other subdomains if any)
+        if not href.startswith("https://www.kompas.com") and not href.startswith("https://kompas.com"):
+            continue
+        items.append({"title": title, "url": href})
+    return items
 
-def get_kompas_article(url):
-    try:
-        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'})
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
+def parse_cnnindo_index(html: str) -> List[Dict]:
+    soup = BeautifulSoup(html, "html.parser")
+    items = []
+    # cnn indonesia nasional index: links under .list media rows
+    for a in soup.select("h2.title a, article a, .list a"):
+        href = a.get("href") or ""
+        title = clean_text(a.get_text())
+        if not href or not title:
+            continue
+        if "cnnindonesia.com" not in href:
+            continue
+        # keep only nasional section
+        if "/nasional/" not in href:
+            continue
+        items.append({"title": title, "url": href})
+    return items
 
-        title_tag = soup.find('h1', class_='read__title')
-        title = title_tag.get_text(strip=True) if title_tag else 'N/A'
+def parse_tempoco_index(html: str) -> List[Dict]:
+    soup = BeautifulSoup(html, "html.parser")
+    items = []
+    for a in soup.select("h2 a, .archive a, article a"):
+        href = a.get("href") or ""
+        title = clean_text(a.get_text())
+        if not href or not title:
+            continue
+        if "tempo.co" not in href:
+            continue
+        # only nasional
+        if "/nasional/" not in href:
+            continue
+        items.append({"title": title, "url": href})
+    return items
 
-        date_tag = soup.find('div', class_='read__time')
-        date_text = date_tag.get_text(strip=True) if date_tag else 'N/A'
-        match = re.search(r'(\d{2}/\d{2}/\d{4}, \d{2}:\d{2})', date_text)
-        if match:
-            date_str = match.group(1)
-            try:
-                parsed_date = datetime.strptime(date_str, '%d/%m/%Y, %H:%M')
-                date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                date = date_text
-        else:
-            date = date_text
+# ---------------------------
+# Pagination Strategies
+# ---------------------------
+# Each site may use different pagination patterns. We'll try a few common ones safely.
+# The crawler will stop early if a page loads but yields zero items.
 
-        content_div = soup.find('div', class_='read__content')
-        paragraphs = content_div.find_all('p') if content_div else []
-        content = "\n".join([p.get_text(strip=True) for p in paragraphs])
-        content = re.sub(r'Baca juga:.*', '', content, flags=re.DOTALL)
-        content = re.sub(r'Baca Juga.*', '', content, flags=re.DOTALL)
-        content = re.sub(r'Simak juga.*', '', content, flags=re.DOTALL)
-        content = re.sub(r'Pilihan Editor.*', '', content, flags=re.DOTALL)
-        content = content.strip()
+def paginated_urls(base: str, pages: int, patterns: List[str]) -> List[str]:
+    urls = []
+    for i in range(1, pages + 1):
+        for pat in patterns:
+            url = pat.format(base=base.rstrip("/"), i=i)
+            urls.append(url)
+    # ensure uniqueness while preserving order
+    seen = set()
+    out = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
 
-        return {'url': url, 'title': title, 'date': date, 'content': content}
-    except requests.exceptions.RequestException as e:
-        return None
-    except Exception as e:
-        return None
+# Best-effort pagination patterns per site (multiple tried per page index)
+DETIK_PATS = [
+    "{base}?page={i}",
+    "{base}/{i}",
+    "{base}?i={i}",
+]
+LIPUTAN6_PATS = [
+    "{base}?page={i}",
+    "{base}/{i}",
+]
+KOMPAS_PATS = [
+    "{base}?page={i}",
+    "{base}/{i}",
+]
+CNN_PATS = [
+    # CNN nasional index often uses .../indeks/{i}
+    "{base}/{i}",
+    "{base}?page={i}",
+]
+TEMPO_PATS = [
+    "{base}?page={i}",
+    "{base}/{i}",
+]
 
-def get_sindonews_article(url):
-    try:
-        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'})
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
+# ---------------------------
+# Article Body Fetch (optional)
+# ---------------------------
 
-        title_tag = soup.find('h1', class_='title')
-        title = title_tag.get_text(strip=True) if title_tag else 'N/A'
+def extract_article_text(url: str) -> str:
+    resp = safe_get(url)
+    if not resp:
+        return ""
+    soup = BeautifulSoup(resp.text, "html.parser")
+    # Try common article body selectors
+    parts = []
+    for sel in [
+        "article",
+        ".detail__body-text",
+        ".read__content",
+        ".photo__caption",
+        ".content",
+        ".post-content",
+        ".par",
+        ".isi",
+        ".main-content",
+    ]:
+        for el in soup.select(sel):
+            txt = clean_text(el.get_text(separator=" "))
+            if txt and len(txt) > 80:
+                parts.append(txt)
+    # fallback: all paragraphs
+    if not parts:
+        ps = [clean_text(p.get_text()) for p in soup.find_all("p")]
+        parts.append(" ".join([p for p in ps if p]))
+    body = " ".join(parts)
+    body = re.sub(r"\s{2,}", " ", body).strip()
+    return body
 
-        date_tag = soup.find('time', class_='time')
-        date_text = date_tag.get_text(strip=True) if date_tag else 'N/A'
-        match = re.search(r'(\d{1,2} \w+ \d{4} - \d{2}:\d{2})', date_text)
-        if match:
-            date_str = match.group(1)
-            month_map = {
-                'Januari': '01', 'Februari': '02', 'Maret': '03', 'April': '04', 'Mei': '05', 'Juni': '06',
-                'Juli': '07', 'Agustus': '08', 'September': '09', 'Okt': '10', 'November': '11', 'Desember': '12'
-            }
-            for full, num in month_map.items():
-                date_str = date_str.replace(full, num)
-            try:
-                parsed_date = datetime.strptime(date_str, '%d %m %Y - %H:%M')
-                date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                date = date_text
-        else:
-            date = date_text
+# ---------------------------
+# Crawl Routines
+# ---------------------------
 
-        content_div = soup.find('div', class_='desc')
-        paragraphs = content_div.find_all('p') if content_div else []
-        content = "\n".join([p.get_text(strip=True) for p in paragraphs])
-        content = re.sub(r'Lihat juga:.*', '', content, flags=re.DOTALL)
-        content = re.sub(r'Jangan Lewatkan!.*', '', content, flags=re.DOTALL)
-        content = content.strip()
-
-        return {'url': url, 'title': title, 'date': date, 'content': content}
-    except requests.exceptions.RequestException as e:
-        return None
-    except Exception as e:
-        return None
-
-def get_liputan6_article(url):
-    try:
-        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'})
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        title_tag = soup.find('h1', class_='jdl')
-        title = title_tag.get_text(strip=True) if title_tag else 'N/A'
-
-        date_tag = soup.find('time', class_='read-info__date')
-        date_text = date_tag.get_text(strip=True) if date_tag else 'N/A'
-        match = re.search(r'(\d{1,2} \w{3} \d{4}, \d{2}:\d{2})', date_text)
-        if match:
-            date_str = match.group(1)
-            month_map = {
-                'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'Mei': '05', 'Jun': '06',
-                'Jul': '07', 'Agu': '08', 'Sep': '09', 'Okt': '10', 'Nov': '11', 'Des': '12'
-            }
-            for abbr, num in month_map.items():
-                date_str = date_str.replace(abbr, num)
-            try:
-                parsed_date = datetime.strptime(date_str, '%d %m %Y, %H:%M')
-                date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                date = date_text
-        else:
-            date = date_text
-
-        content_div = soup.find('div', class_='article-content-body__item-content')
-        paragraphs = content_div.find_all('p') if content_div else []
-        content = "\n".join([p.get_text(strip=True) for p in paragraphs])
-        content = re.sub(r'Baca Juga.*', '', content, flags=re.DOTALL)
-        content = re.sub(r'Simak berita Liputan6.com lainnya.*', '', content, flags=re.DOTALL)
-        content = content.strip()
-
-        return {'url': url, 'title': title, 'date': date, 'content': content}
-    except requests.exceptions.RequestException as e:
-        return None
-    except Exception as e:
-        return None
-
-def get_cnn_article(url):
-    try:
-        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'})
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        title_tag = soup.find('h1', class_='detail_title')
-        title = title_tag.get_text(strip=True) if title_tag else 'N/A'
-
-        date_tag = soup.find('div', class_='detail_date')
-        date_text = date_tag.get_text(strip=True) if date_tag else 'N/A'
-        match = re.search(r'(\d{1,2} \w{3} \d{4} \d{2}:\d{2})', date_text)
-        if match:
-            date_str = match.group(1)
-            month_map = {
-                'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'Mei': '05', 'Jun': '06',
-                'Jul': '07', 'Agu': '08', 'Sep': '09', 'Okt': '10', 'Nov': '11', 'Des': '12'
-            }
-            for abbr, num in month_map.items():
-                date_str = date_str.replace(abbr, num)
-            try:
-                parsed_date = datetime.strptime(date_str, '%d %m %Y %H:%M')
-                date = parsed_date.strftime('%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                date = date_text
-        else:
-            date = date_text
-
-        content_div = soup.find('div', class_='detail_text')
-        paragraphs = content_div.find_all('p') if content_div else []
-        content = "\n".join([p.get_text(strip=True) for p in paragraphs])
-        content = re.sub(r'Baca berita selengkapnya di CNNIndonesia.com', '', content, flags=re.DOTALL)
-        content = re.sub(r'Lihat Juga:.*', '', content, flags=re.DOTALL)
-        content = content.strip()
-
-        return {'url': url, 'title': title, 'date': date, 'content': content}
-    except requests.exceptions.RequestException as e:
-        return None
-    except Exception as e:
-        return None
-
-def crawl_articles(urls):
-    """
-    Meng-crawl data artikel dari daftar URL yang diberikan.
-    """
+def crawl_site(base_url: str, site_name: str, pages: int, parser, patterns: List[str], deep_body: bool, kw: str) -> List[Dict]:
     results = []
-    if not urls:
-        return pd.DataFrame(results)
-    
-    st.info(f"Memulai crawling untuk {len(urls)} URL yang ditemukan...")
-    progress_bar = st.progress(0)
-    for i, url in enumerate(urls):
-        article_data = None
-        # Mengidentifikasi domain untuk memanggil crawler yang sesuai
-        if "detik.com" in url:
-            article_data = get_detik_article(url)
-        elif "kompas.com" in url:
-            article_data = get_kompas_article(url)
-        elif "sindonews.com" in url:
-            article_data = get_sindonews_article(url)
-        elif "liputan6.com" in url:
-            article_data = get_liputan6_article(url)
-        elif "cnnindonesia.com" in url:
-            article_data = get_cnn_article(url)
-        else:
-            pass # Melewatkan URL yang tidak didukung secara diam-diam
+    urls = paginated_urls(base_url, pages, patterns)
+    seen_urls = set()
+    for idx, url in enumerate(urls, start=1):
+        resp = safe_get(url)
+        polite_delay()
+        if not resp:
+            continue
+        try:
+            items = parser(resp.text)
+        except Exception:
+            items = []
+        # Early stop if page loads but yields nothing
+        if idx > pages and not items:
+            break
+        for it in items:
+            link = it.get("url", "")
+            title = it.get("title", "")
+            if not link or not title:
+                continue
+            if link in seen_urls:
+                continue
+            seen_urls.add(link)
+            # keyword filter on title first
+            title_match = kw_match(title, kw) if kw else True
+            body_text = ""
+            body_match = False
+            if deep_body and not title_match:
+                # fetch article body to check keyword presence
+                body_text = extract_article_text(link)
+                body_match = kw_match(body_text, kw)
+            if kw:
+                if not (title_match or body_match):
+                    continue
+            results.append({
+                "site": site_name,
+                "title": title,
+                "url": link,
+                "match": "title" if title_match else ("body" if body_match else ""),
+                "time": it.get("time", ""),
+                "snippet": (body_text[:200] + "...") if body_text else "",
+                "crawled_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            })
+    return results
 
-        if article_data:
-            results.append(article_data)
-        progress_bar.progress((i + 1) / len(urls))
-        time.sleep(1.5) # Jeda untuk menghindari pemblokiran
-    return pd.DataFrame(results)
+def crawl_all(kw: str, pages: int, sites: List[str], deep_body: bool) -> pd.DataFrame:
+    jobs = []
+    with futures.ThreadPoolExecutor(max_workers=min(8, len(sites)*2 or 2)) as ex:
+        if "Detik" in sites:
+            jobs.append(ex.submit(crawl_site, "https://news.detik.com/indeks", "Detik", pages, parse_detik_index, DETIK_PATS, deep_body, kw))
+        if "Liputan6" in sites:
+            jobs.append(ex.submit(crawl_site, "https://www.liputan6.com/indeks", "Liputan6", pages, parse_liputan6_index, LIPUTAN6_PATS, deep_body, kw))
+        if "Kompas" in sites:
+            jobs.append(ex.submit(crawl_site, "https://indeks.kompas.com", "Kompas", pages, parse_kompas_index, KOMPAS_PATS, deep_body, kw))
+        if "CNN Indonesia (Nasional)" in sites:
+            jobs.append(ex.submit(crawl_site, "https://www.cnnindonesia.com/nasional/indeks", "CNN Indonesia", pages, parse_cnnindo_index, CNN_PATS, deep_body, kw))
+        if "Tempo (Nasional)" in sites:
+            jobs.append(ex.submit(crawl_site, "https://www.tempo.co/indeks", "Tempo", pages, parse_tempoco_index, TEMPO_PATS, deep_body, kw))
+        results = []
+        for job in futures.as_completed(jobs):
+            try:
+                results.extend(job.result())
+            except Exception as e:
+                st.warning(f"Gagal pada salah satu situs: {e}")
+    if not results:
+        return pd.DataFrame(columns=["site","title","url","match","time","snippet","crawled_at"])
+    df = pd.DataFrame(results).drop_duplicates(subset=["url"]).reset_index(drop=True)
+    return df
 
-## Fungsi Pencarian Artikel Berita (Menggunakan DuckDuckGo)
+# ---------------------------
+# Streamlit UI
+# ---------------------------
 
-def search_for_urls_from_keyword(keyword, num_results=5):
-    """
-    Melakukan pencarian di DuckDuckGo untuk mendapatkan URL artikel berdasarkan kata kunci.
-    """
-    st.info(f"Mencari URL artikel di DuckDuckGo untuk keyword: '{keyword}'...")
-    
-    supported_domains = [
-        "detik.com", "kompas.com", "sindonews.com", "liputan6.com", "cnnindonesia.com", 
-        "tempo.co", "tribunnews.com", "okezone.com", "merdeka.com", "antaranews.com", "republika.co.id"
+st.set_page_config(page_title="Crawler Indeks Berita 🇮🇩", layout="wide")
+
+st.title("Crawler Indeks Berita 🇮🇩")
+st.caption("Detik, Liputan6, Kompas, CNN Indonesia (Nasional), Tempo (Nasional) — filter berdasarkan kata kunci.")
+
+with st.sidebar:
+    st.header("Pengaturan")
+    kw = st.text_input("Kata Kunci (contoh: 'pemilu', 'AI', 'pendidikan')", value="")
+    pages = st.slider("Jumlah halaman per situs (best effort)", min_value=1, max_value=5, value=2, help="Coba beberapa pola pagination umum; akan berhenti jika kosong.")
+    deep_body = st.checkbox("Cari juga di isi artikel (lebih lambat)", value=False)
+    site_opts = [
+        "Detik", "Liputan6", "Kompas", "CNN Indonesia (Nasional)", "Tempo (Nasional)"
     ]
-    
-    encoded_keyword = urllib.parse.quote_plus(keyword)
-    # Gunakan 'ia=news' untuk memfilter hasil berita di DuckDuckGo
-    search_url = f"[https://duckduckgo.com/?q=](https://duckduckgo.com/?q=){encoded_keyword}&ia=news" 
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9,id;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-        'Connection': 'keep-alive',
-    }
-    
-    found_urls = []
-    try:
-        response = requests.get(search_url, headers=headers, timeout=15)
-        response.raise_for_status() 
-        soup = BeautifulSoup(response.text, 'html.parser')
+    selected_sites = st.multiselect("Pilih situs", site_opts, default=site_opts)
 
-        # Strategi 1: Mencari link dengan class 'result__a' (paling umum untuk DuckDuckGo)
-        for link_tag in soup.find_all('a', class_='result__a'):
-            href = link_tag.get('href')
-            if href and href.startswith('http'):
-                # Penanganan redirect internal DuckDuckGo (jika ada)
-                if href.startswith('[https://duckduckgo.com/l/](https://duckduckgo.com/l/)'):
-                    parsed_url = urllib.parse.urlparse(href)
-                    query_params = urllib.parse.parse_qs(parsed_url.query)
-                    if 'uddg' in query_params:
-                        actual_url = query_params['uddg'][0]
-                        decoded_actual_url = urllib.parse.unquote(actual_url) 
-                        href = decoded_actual_url
-                
-                for domain in supported_domains:
-                    if domain in href:
-                        if href not in found_urls: # Hanya tambahkan jika unik
-                            found_urls.append(href)
-                            break 
-                if len(found_urls) >= num_results:
-                    break
-        
-        # Strategi 2 (Fallback/Alternatif): Mencari link di dalam elemen hasil pencarian yang lebih umum
-        # Ini akan mencoba menemukan link jika Strategi 1 tidak cukup atau struktur HTML berubah.
-        if len(found_urls) < num_results:
-            # Mencari semua <a> tag yang memiliki atribut href dan dimulai dengan 'http'
-            # Serta memastikan itu bukan bagian dari UI DuckDuckGo (misal: link internal)
-            for link_tag in soup.find_all('a', href=re.compile(r'^http')):
-                href = link_tag.get('href')
-                
-                # Filter tautan yang bukan merupakan bagian dari UI DuckDuckGo itu sendiri
-                # atau yang merupakan redirect internal DuckDuckGo yang sudah ditangani
-                if "duckduckgo.com" not in href or href.startswith("[https://duckduckgo.com/l/](https://duckduckgo.com/l/)"):
-                    # Penanganan redirect internal DuckDuckGo (jika ada)
-                    if href.startswith('[https://duckduckgo.com/l/](https://duckduckgo.com/l/)'):
-                        parsed_url = urllib.parse.urlparse(href)
-                        query_params = urllib.parse.parse_qs(parsed_url.query)
-                        if 'uddg' in query_params:
-                            actual_url = query_params['uddg'][0]
-                            decoded_actual_url = urllib.parse.unquote(actual_url) 
-                            href = decoded_actual_url
-                    
-                    for domain in supported_domains:
-                        if domain in href:
-                            if href not in found_urls: # Hanya tambahkan jika unik
-                                found_urls.append(href)
-                                break 
-                    if len(found_urls) >= num_results:
-                        break # Cukup hasil, hentikan pencarian
+    run_btn = st.button("Jalankan Crawler")
 
-    except requests.exceptions.RequestException as e:
-        status_code = response.status_code if 'response' in locals() else 'N/A'
-        st.error(f"Error saat mencari URL di DuckDuckGo (Status: {status_code}): {e}. Periksa koneksi internet Anda atau coba lagi nanti.")
-    except Exception as e:
-        st.error(f"Terjadi kesalahan tidak terduga saat parsing hasil pencarian DuckDuckGo: {e}. **Sangat disarankan untuk memeriksa struktur HTML DuckDuckGo secara manual.**")
+st.markdown("> **Catatan:** Pola pagination setiap situs bisa berubah. Aplikasi ini mencoba beberapa pola umum dan berhenti jika halaman kosong.")
 
-    # Ambil URL unik dan batasi jumlahnya
-    unique_urls = list(dict.fromkeys(found_urls)) 
-    
-    if not unique_urls:
-        st.warning(f"""
-        **Peringatan Penting:** Tidak ada URL yang ditemukan dari situs berita yang didukung untuk kata kunci **'{keyword}'** di DuckDuckGo.
-        Ini mungkin karena:
-        * Tidak ada artikel yang sangat relevan dari situs yang didukung muncul di hasil DuckDuckGo.
-        * **Struktur HTML DuckDuckGo telah berubah.** Kode **`search_for_urls_from_keyword`** mungkin perlu diperbarui kembali dengan selektor yang baru yang Anda temukan dari **inspeksi manual**.
-        """)
-        st.info("Saran: Coba kata kunci yang lebih umum (misal: 'ekonomi Indonesia', 'berita politik') atau kurangi jumlah artikel yang diminta.")
-    
-    return unique_urls[:num_results]
+if run_btn:
+    if not kw:
+        st.warning("Masukkan kata kunci terlebih dahulu.")
+        st.stop()
+    with st.spinner("Mengambil data..."):
+        df = crawl_all(kw, pages, selected_sites, deep_body)
+    st.success(f"Selesai. Ditemukan {len(df)} data.")
+    st.dataframe(df, use_container_width=True)
 
-st.set_page_config(layout="wide", page_title="Crawler Artikel Berita Indonesia")
+    if not df.empty:
+        # Download buttons
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("Unduh CSV", data=csv, file_name=f"hasil_crawl_{re.sub(r'\\W+','_',kw.lower())}.csv", mime="text/csv")
 
-st.title("🇮🇩 Crawler Artikel Berita Indonesia")
-st.write("Aplikasi ini memungkinkan Anda untuk mencari artikel berita berdasarkan kata kunci dan meng-crawl judul, tanggal, dan isinya dari beberapa situs berita populer di Indonesia.")
+        try:
+            import io
+            import xlsxwriter
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                df.to_excel(writer, index=False, sheet_name="Data")
+            st.download_button("Unduh Excel", data=output.getvalue(), file_name=f"hasil_crawl_{re.sub(r'\\W+','_',kw.lower())}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        except Exception:
+            st.info("Modul xlsxwriter tidak tersedia. Gunakan CSV atau install xlsxwriter.")
+else:
+    st.info("Masukkan kata kunci, pilih situs, lalu klik **Jalankan Crawler**.")
 
-st.subheader("Masukkan Kata Kunci")
-keyword_input = st.text_input(
-    "Masukkan kata kunci untuk mencari artikel berita:",
-    help="Contoh: 'makan siang gratis', 'inflasi Indonesia', 'harga minyak dunia'"
-)
-
-num_articles_to_crawl = st.slider(
-    "Jumlah artikel yang ingin di-crawl (maksimal 20):",
-    min_value=1,
-    max_value=20, 
-    value=5
-)
-
-if st.button("Cari dan Mulai Crawling"):
-    if not keyword_input:
-        st.warning("Mohon masukkan kata kunci.")
-    else:
-        with st.spinner("Mencari URL dan crawling artikel... Mohon tunggu, proses ini mungkin memakan waktu beberapa detik per artikel."):
-            urls_to_crawl = search_for_urls_from_keyword(keyword_input, num_articles_to_crawl)
-            
-            if urls_to_crawl:
-                st.success(f"Ditemukan {len(urls_to_crawl)} URL yang relevan. Memulai crawling...")
-                df_articles = crawl_articles(urls_to_crawl)
-
-                if not df_articles.empty:
-                    st.subheader("Hasil Crawling")
-                    st.dataframe(df_articles)
-
-                    excel_buffer = BytesIO()
-                    df_articles.to_excel(excel_buffer, index=False, engine='openpyxl')
-                    excel_buffer.seek(0)
-
-                    st.download_button(
-                        label="Unduh Data sebagai XLSX",
-                        data=excel_buffer,
-                        file_name=f"{keyword_input.replace(' ', '_')}_artikel_berita.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
-                else:
-                    st.warning("Tidak ada artikel yang berhasil di-crawl dari URL yang ditemukan.")
-            else:
-                st.warning("Tidak ada URL yang ditemukan untuk kata kunci tersebut dari situs berita yang didukung. Coba kata kunci lain atau periksa kembali.")
-
-st.markdown("---")
-st.markdown("Dikembangkan dengan ❤️ untuk Anda.")
-st.markdown("""
-**Penting:**
-* Fungsi pencarian URL mengandalkan **web scraping DuckDuckGo**. Jika DuckDuckGo mengubah struktur halamannya, fungsi ini mungkin perlu diperbarui kembali.
-* Lakukan crawling secara bertanggung jawab. Terlalu banyak permintaan dalam waktu singkat dapat menyebabkan IP Anda diblokir oleh situs berita.
-* Jumlah artikel yang dapat di-crawl bergantung pada hasil yang diberikan oleh DuckDuckGo dan kemampuan crawler untuk mengekstraknya.
-""")
