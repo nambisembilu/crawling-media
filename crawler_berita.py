@@ -115,7 +115,7 @@ st.caption("Ambil daftar link dari Google menggunakan **Google Custom Search JSO
 with st.sidebar:
     st.header("Pengaturan Pencarian")
     query = st.text_input("Kata kunci / operator (mis. `pemilu site:kompas.com`)")
-    num_results = st.number_input("Jumlah hasil (maks 100)", min_value=1, max_value=100, value=20, step=1)
+    num_results = st.number_input("Jumlah hasil (maks 100)", min_value=1, max_value=500, value=20, step=1)
     hl = st.text_input("HL (bahasa)", value="id")
     gl = st.text_input("GL (geolokasi)", value="id")
     st.markdown("---")
