@@ -1,6 +1,6 @@
 # google_cse_search_split_streamlit.py
-# Streamlit app – Google CSE ONLY + query splitting by date + quota estimator + article extraction (news-fetch)
-# Jalankan: streamlit run google_cse_search_split_streamlit.py
+# Google CSE ONLY + query splitting by date + AUTO quota estimate/validation (pre-run)
+# + optional article extraction (news-fetch)
 
 import re
 import io
@@ -8,7 +8,7 @@ import json
 import math
 import time
 from datetime import date, timedelta
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 import concurrent.futures as futures
 
 import requests
@@ -16,7 +16,7 @@ import pandas as pd
 import streamlit as st
 from bs4 import BeautifulSoup
 
-APP_TITLE = "Google CSE Link Grabber 🔎 — Split by Date + Article Extract"
+APP_TITLE = "Google CSE Link Grabber 🔎 — Split by Date + Auto Quota Guard"
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 # =========================
@@ -38,7 +38,6 @@ def to_dataframe(items: List[Dict]) -> pd.DataFrame:
         if c not in df.columns:
             df[c] = ""
     df = df[cols]
-    # dedup by link
     df = df.drop_duplicates(subset=["link"]).reset_index(drop=True)
     return df
 
@@ -59,7 +58,6 @@ def export_buttons(df: pd.DataFrame, filename_prefix: str):
         st.info("Modul xlsxwriter tidak tersedia. Gunakan CSV atau install xlsxwriter.")
 
 def daterange_chunks(start: date, end: date, granularity: str) -> List[Tuple[date, date, str]]:
-    """Split [start, end] inclusive menjadi shard: Monthly / Weekly / Daily."""
     chunks = []
     if start > end:
         return chunks
@@ -69,31 +67,27 @@ def daterange_chunks(start: date, end: date, granularity: str) -> List[Tuple[dat
             nxt = date(cur.year + 1, 1, 1) if cur.month == 12 else date(cur.year, cur.month + 1, 1)
             chunk_start = max(cur, start)
             chunk_end = min(nxt - timedelta(days=1), end)
-            label = cur.strftime("%Y-%m")
-            chunks.append((chunk_start, chunk_end, label))
+            chunks.append((chunk_start, chunk_end, cur.strftime("%Y-%m")))
             cur = nxt
     elif granularity == "Weekly":
         cur = start
         while cur <= end:
             chunk_start = cur
             chunk_end = min(cur + timedelta(days=6), end)
-            label = f"wk_{chunk_start.strftime('%Y-%m-%d')}"
-            chunks.append((chunk_start, chunk_end, label))
+            chunks.append((chunk_start, chunk_end, f"wk_{chunk_start:%Y-%m-%d}"))
             cur = chunk_end + timedelta(days=1)
     else:  # Daily
         cur = start
         while cur <= end:
-            label = cur.strftime("%Y-%m-%d")
-            chunks.append((cur, cur, label))
+            chunks.append((cur, cur, f"{cur:%Y-%m-%d}"))
             cur = cur + timedelta(days=1)
     return chunks
 
 # =========================
-# Google CSE (JSON API)
+# Google CSE
 # =========================
 
 def search_cse(api_key: str, cx: str, query: str, num: int = 10, start: int = 1, gl: str = "id", hl: str = "id") -> List[Dict]:
-    """Ambil max 10 hasil untuk satu halaman CSE."""
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
         "key": api_key, "cx": cx, "q": query,
@@ -116,8 +110,7 @@ def search_cse(api_key: str, cx: str, query: str, num: int = 10, start: int = 1,
     return items
 
 def search_cse_paginated(api_key: str, cx: str, query: str, total: int, gl: str = "id", hl: str = "id") -> List[Dict]:
-    """Paginate hingga 100 hasil (limit Google CSE per query)."""
-    total = max(1, min(int(total), 100))
+    total = max(1, min(int(total), 100))  # CSE hard cap
     collected, start_idx, remaining = [], 1, total
     while remaining > 0:
         batch = min(remaining, 10)
@@ -127,63 +120,44 @@ def search_cse_paginated(api_key: str, cx: str, query: str, total: int, gl: str 
         collected.extend(items)
         remaining -= len(items)
         start_idx += len(items)
-        time.sleep(0.25)  # polite delay
+        time.sleep(0.25)
     return collected
 
 def build_query_with_dates(base_query: str, d_start: date, d_end: date) -> str:
-    """Tambahkan operator after:/before: (before pakai end+1 agar inklusif)."""
+    # before pakai end+1 agar inklusif
     return f"{base_query.strip()} after:{d_start:%Y-%m-%d} before:{(d_end + timedelta(days=1)):%Y-%m-%d}"
 
 # =========================
-# Estimator Kuota (CSE)
+# Quota Estimator & Guard
 # =========================
 
 def estimate_cse_calls(num_shards: int, per_shard_limit: int) -> int:
-    """CSE: 1 panggilan per 10 hasil (dibulatkan ke atas)."""
+    # 1 call per 10 results
     per_shard_calls = math.ceil(per_shard_limit / 10.0)
     return num_shards * per_shard_calls
 
+def can_run_with_quota(num_shards: int, per_shard_limit: int, user_quota_left: int) -> Tuple[bool, int]:
+    est = estimate_cse_calls(num_shards, per_shard_limit)
+    return est <= max(0, int(user_quota_left)), est
+
 # =========================
-# Ekstraksi Artikel (news-fetch)
+# Article Extraction (news-fetch)
 # =========================
 
 def extract_article_newsfetch(url: str) -> Dict[str, str]:
-    """
-    Gunakan 'news-fetch' bila tersedia:
-      from newsfetch.news import Newspaper
-      news = Newspaper(url='...')
-      Ambil: headline (title), article (full text), authors, date_publish
-    Fallback ke requests+BS4 bila gagal.
-    """
-    # Coba import bentuk kelas (sesuai dokumentasi PyPI terbaru)
-    news = None
+    # Try news-fetch class API
     try:
         from newsfetch.news import Newspaper
-        news = Newspaper(url=url)  # :contentReference[oaicite:0]{index=0}
+        news = Newspaper(url=url)
         title = clean_text(getattr(news, "headline", "") or "")
         text = clean_text(getattr(news, "article", "") or "")
         authors = clean_text(", ".join(getattr(news, "authors", []) or []) or "")
         published = clean_text(str(getattr(news, "date_publish", "")) or "")
-        if text or title:
+        if title or text:
             return {"article_title": title, "article_text": text, "article_author": authors, "article_published": published}
     except Exception:
         pass
-
-    # Beberapa referensi lama menunjukkan fungsi lowercase `newspaper(url)`:
-    try:
-        from newsfetch.news import newspaper  # historic variant :contentReference[oaicite:1]{index=1}
-        news = newspaper(url)
-        # best-effort mapping
-        title = clean_text(getattr(news, "headline", "") or getattr(news, "title", "") or "")
-        text = clean_text(getattr(news, "article", "") or getattr(news, "text", "") or "")
-        authors = clean_text(", ".join(getattr(news, "authors", []) or []) or "")
-        published = clean_text(str(getattr(news, "date_publish", "")) or "")
-        if text or title:
-            return {"article_title": title, "article_text": text, "article_author": authors, "article_published": published}
-    except Exception:
-        pass
-
-    # Fallback sederhana
+    # Fallback to requests + BS4
     try:
         resp = requests.get(url, timeout=25, headers={"User-Agent": "Mozilla/5.0"})
         if resp.status_code == 200:
@@ -197,24 +171,22 @@ def extract_article_newsfetch(url: str) -> Dict[str, str]:
     return {"article_title": "", "article_text": "", "article_author": "", "article_published": ""}
 
 def enrich_with_articles(items: List[Dict], max_workers: int = 8) -> List[Dict]:
-    """Ambil isi artikel paralel (hati-hati rate-limit situs berita)."""
     if not items:
         return items
     out = []
-    with futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
         futs = {ex.submit(extract_article_newsfetch, it["link"]): it for it in items if it.get("link")}
-        for i, (fut, base) in enumerate(zip(futs.keys(), futs.values()), start=1):
+        for fut, base in futs.items():
             try:
                 extra = fut.result(timeout=60)
                 base.update(extra)
             except Exception:
-                # jika error ekstraksi, tetap kembalikan record dasarnya
                 pass
             out.append(base)
     return out
 
 # =========================
-# Streamlit Progress Helper
+# Streamlit utils
 # =========================
 
 def stqdm(iterable, desc="Progress"):
@@ -255,7 +227,7 @@ if "filename_prefix" not in st.session_state:
 # =========================
 
 st.title(APP_TITLE)
-st.caption("Pecah pencarian per tanggal (Daily/Weekly/Monthly), estimasi kuota CSE, dan ekstraksi isi artikel via news-fetch.")
+st.caption("Split query by date ⇒ hitung kuota otomatis ⇒ validasi kuota sebelum jalan ⇒ optional ekstraksi isi artikel (news-fetch).")
 
 with st.sidebar:
     with st.form("controls"):
@@ -275,30 +247,40 @@ with st.sidebar:
 
         st.markdown("---")
         per_shard_limit = st.number_input("Maks hasil per shard (≤100)", 1, 100, 50)
-        extract_articles = st.checkbox("Ekstrak isi artikel (news-fetch)", value=False, help="Akan menambah banyak request ke situs berita")
-        max_workers = st.slider("Paralel ekstraksi (thread)", 1, 16, 8, help="Kurangi jika sering diblokir situs")
+
+        st.markdown("---")
+        st.subheader("Kuota CSE")
+        quota_left = st.number_input("Sisa kuota CSE hari ini (perkiraan)", min_value=0, value=100, step=1,
+                                     help="Diisi manual sesuai kuota akun Google-mu")
+
+        st.markdown("---")
+        st.subheader("Ekstraksi Artikel (opsional)")
+        extract_articles = st.checkbox("Ekstrak isi artikel (news-fetch)", value=False)
+        max_workers = st.slider("Paralel ekstraksi (thread)", 1, 16, 8)
 
         st.markdown("---")
         api_key = st.text_input("CSE API Key", type="password")
         cx = st.text_input("CSE Search Engine ID (cx)", type="password")
 
-        # Estimator kuota (hanya hitung; tidak memanggil API)
-        if base_query and start_date <= end_date:
-            shards = daterange_chunks(start_date, end_date, granularity)
-            estimated_calls = estimate_cse_calls(len(shards), per_shard_limit)
-            st.info(f"📊 Estimasi panggilan CSE: **{estimated_calls} call** "
-                    f"(shards={len(shards)} × ceil({per_shard_limit}/10))")
+        # AUTO quota estimation (pre-submit) — dihitung tiap perubahan form
+        shards_preview = daterange_chunks(start_date, end_date, granularity) if base_query and start_date <= end_date else []
+        est_calls = estimate_cse_calls(len(shards_preview), per_shard_limit) if shards_preview else 0
+
+        colm1, colm2 = st.columns(2)
+        with colm1:
+            st.metric("Perkiraan panggilan CSE", est_calls)
+        with colm2:
+            st.metric("Jumlah shard", len(shards_preview))
+
         submitted = st.form_submit_button("Jalankan Pencarian")
 
 st.markdown("""
-**Cara kerja**
-- Pecah rentang tanggal menjadi shard; tiap shard ditambah `after:` dan `before:`.
-- Setiap shard ambil ≤100 hasil (CSE limit).  
-- Estimasi kuota = jumlah shard × ceil(per_shard_limit / 10).  
-- Opsi tambahan mengekstrak isi artikel memakai **news-fetch** (fallback BeautifulSoup).
+**Catatan**
+- Estimasi kuota = jumlah_shard × ceil(per_shard_limit / 10).  
+- Jika estimasi > sisa kuota yang kamu isi, proses **akan ditahan** terlebih dahulu.
 """)
 
-# Eksekusi
+# Eksekusi (dengan guard kuota otomatis sebelum jalan)
 if submitted:
     if not base_query:
         st.warning("Masukkan kata kunci terlebih dahulu.")
@@ -307,30 +289,34 @@ if submitted:
     elif start_date > end_date:
         st.error("Tanggal mulai tidak boleh melebihi tanggal selesai.")
     else:
+        # Hitung ulang estimasi (agar konsisten)
         shards = daterange_chunks(start_date, end_date, granularity)
-        all_items: List[Dict] = []
+        ok, est = can_run_with_quota(len(shards), per_shard_limit, quota_left)
+        if not shards:
+            st.warning("Rentang tanggal menghasilkan 0 shard. Periksa pengaturan.")
+        elif not ok:
+            st.error(f"Estimasi panggilan CSE **{est}** melebihi sisa kuota **{quota_left}**. "
+                     f"Kurangi rentang tanggal atau hasil per shard.")
+        else:
+            all_items: List[Dict] = []
+            for (s, e, label) in stqdm(shards, desc="Memproses shard tanggal"):
+                q = build_query_with_dates(base_query, s, e)
+                items = search_cse_paginated(api_key, cx, q, total=per_shard_limit, gl=gl or "id", hl=hl or "id")
+                for it in items:
+                    it["shard_label"] = label
+                    it["shard_start"] = s.isoformat()
+                    it["shard_end"] = e.isoformat()
+                all_items.extend(items)
 
-        # Crawl per shard dengan progress
-        for (s, e, label) in stqdm(shards, desc="Memproses shard tanggal"):
-            q = build_query_with_dates(base_query, s, e)
-            items = search_cse_paginated(api_key, cx, q, total=per_shard_limit, gl=gl or "id", hl=hl or "id")
-            for it in items:
-                it["shard_label"] = label
-                it["shard_start"] = s.isoformat()
-                it["shard_end"] = e.isoformat()
-            all_items.extend(items)
+            if extract_articles and all_items:
+                st.write("📥 Mengekstrak isi artikel…")
+                all_items = enrich_with_articles(all_items, max_workers=max_workers)
 
-        if extract_articles and all_items:
-            st.write("📥 Mengekstrak isi artikel (ini bisa agak lama)…")
-            all_items = enrich_with_articles(all_items, max_workers=max_workers)
-
-        df = to_dataframe(all_items)
-
-        # Persist
-        st.session_state.results_df = df
-        st.session_state.raw_items = all_items
-        safe_name = re.sub(r"\W+", "_", f"{base_query}_{start_date}_{end_date}".lower())
-        st.session_state.filename_prefix = f"google_cse_split_{safe_name}"
+            df = to_dataframe(all_items)
+            st.session_state.results_df = df
+            st.session_state.raw_items = all_items
+            safe_name = re.sub(r"\W+", "_", f"{base_query}_{start_date}_{end_date}".lower())
+            st.session_state.filename_prefix = f"google_cse_split_{safe_name}"
 
 # Render hasil
 if not st.session_state.results_df.empty:
@@ -342,5 +328,4 @@ if not st.session_state.results_df.empty:
     with st.expander("JSON mentah"):
         st.code(json.dumps(items, ensure_ascii=False, indent=2))
 else:
-    st.info("Isi keyword, API key & CX, set tanggal, lalu klik **Jalankan Pencarian**.")
-
+    st.info("Isi keyword, kuota, API key & CX, set tanggal, lalu klik **Jalankan Pencarian**.")
