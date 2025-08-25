@@ -1,16 +1,17 @@
 # google_cse_search_auto_optimize.py
 # Streamlit – Google CSE ONLY + query splitting + Max Request Guard + Auto Optimize
+# Estimator realtime untuk "Estimasi request" & "Maks hasil terambil"
 # Jalankan: streamlit run google_cse_search_auto_optimize.py
 
 import re, io, json, math, time
 from datetime import date, timedelta
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 import concurrent.futures as futures
 
 import requests, pandas as pd, streamlit as st
 from bs4 import BeautifulSoup
 
-APP_TITLE = "Media Crawler - ID"
+APP_TITLE = "Google CSE Link Grabber 🔎 — Split by Date + Max Request Guard + Auto Optimize"
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 # =========================
@@ -42,7 +43,7 @@ def export_buttons(df: pd.DataFrame, filename_prefix: str):
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="dl_xlsx")
     except Exception:
-        st.info("Modul xlsxwriter tidak tersedia. Gunakan CSV atau install xlsxwriter.")
+        st.info("Modul xlsxwriter tidak tersedia. Gunakan CSV; atau install xlsxwriter.")
 
 def daterange_chunks(start: date, end: date, granularity: str):
     chunks=[]
@@ -101,12 +102,12 @@ def build_query_with_dates(base,d_start,d_end):
     return f"{base.strip()} after:{d_start:%Y-%m-%d} before:{(d_end+timedelta(days=1)):%Y-%m-%d}"
 
 # =========================
-# Request & Results Estimator
+# Estimator
 # =========================
 def estimate_calls_and_results(n_shards:int, per_shard_limit:int)->Tuple[int,int]:
     """Return (estimated_calls, estimated_results_cap)."""
-    calls = n_shards * math.ceil(per_shard_limit/10.0)
-    results_cap = n_shards * per_shard_limit
+    calls = n_shards * math.ceil(per_shard_limit/10.0)   # 1 call per 10 hasil
+    results_cap = n_shards * per_shard_limit             # batas maksimal hasil (sebelum dedup)
     return calls, results_cap
 
 def max_per_shard_limit_under_calls(n_shards:int, max_calls:int)->int:
@@ -175,8 +176,8 @@ def plan_auto_optimize(start_date:date, end_date:date, target_links:int, max_cal
     Cari kombinasi paling hemat:
       - Coba granularity: Monthly → Weekly → Daily
       - Hitung jumlah shard & limit per shard maksimum yang muat di max_calls
-      - Pilih limit minimal yang cukup untuk mencapai target (tanpa melampaui max_calls)
-    Return: (granularity, per_shard_limit, n_shards, est_calls, est_results_cap)
+      - Pilih limit minimal yang cukup untuk capai target
+    Return: (granularity, per_shard_limit, n_shards, est_calls, est_results_cap) atau None
     """
     for gran in ["Monthly","Weekly","Daily"]:
         shards = daterange_chunks(start_date, end_date, gran)
@@ -184,14 +185,12 @@ def plan_auto_optimize(start_date:date, end_date:date, target_links:int, max_cal
         Lmax = max_per_shard_limit_under_calls(n_shards, max_calls)
         if Lmax <= 0:
             continue
-        # berapa L minimum agar cap hasil ≥ target?
         L_needed = math.ceil(max(1, target_links) / max(1, n_shards))
-        L = min(Lmax, max(10, L_needed))         # ambil minimal yang cukup, tapi ≥10 dan ≤Lmax
+        L = min(Lmax, max(10, L_needed))         # minimal cukup, ≥10, ≤Lmax
         est_calls, est_cap = estimate_calls_and_results(n_shards, L)
         if est_calls <= max_calls and est_cap >= target_links:
             return gran, L, n_shards, est_calls, est_cap
-    # jika semua gagal, kembalikan rencana terbaik (maksimal yang muat)
-    # pilih granularity dengan est_cap tertinggi tanpa melewati max_calls
+    # fallback: pilih skema dengan est_cap terbesar tanpa > max_calls
     best = None
     for gran in ["Monthly","Weekly","Daily"]:
         shards = daterange_chunks(start_date, end_date, gran)
@@ -200,9 +199,9 @@ def plan_auto_optimize(start_date:date, end_date:date, target_links:int, max_cal
         if Lmax <= 0: continue
         est_calls, est_cap = estimate_calls_and_results(n_shards, Lmax)
         cand = (gran, Lmax, n_shards, est_calls, est_cap)
-        if (best is None) or (cand[4] > best[4]):  # bandingkan est_cap
+        if (best is None) or (cand[4] > best[4]):
             best = cand
-    return best  # bisa None bila max_calls terlalu kecil
+    return best
 
 def run_split_search(api_key,cx,base_query,start_date,end_date,granularity,per_shard_limit,gl,hl, extract=False, max_workers=8):
     shards = daterange_chunks(start_date, end_date, granularity)
@@ -226,57 +225,61 @@ if "raw_items" not in st.session_state: st.session_state.raw_items=[]
 if "filename_prefix" not in st.session_state: st.session_state.filename_prefix="google_cse_results"
 
 # =========================
-# UI
+# UI — Realtime estimator (di luar form)
 # =========================
 st.title(APP_TITLE)
-st.caption("Optimasi otomatis untuk mencapai target link dengan request minimal, CSE-only.")
+st.caption("Optimasi otomatis untuk capai target link dengan request minimal. Estimator realtime di sidebar.")
 
 with st.sidebar:
-    with st.form("controls"):
-        base_query = st.text_input("Kata kunci / operator", value="AI site:kompas.com")
-        hl = st.text_input("HL (bahasa)", value="id")
-        gl = st.text_input("GL (geo)", value="id")
+    st.header("Pengaturan")
+    # Input parameter (langsung—tanpa form—agar realtime)
+    base_query = st.text_input("Kata kunci / operator", value="AI site:kompas.com")
+    hl = st.text_input("HL (bahasa)", value="id")
+    gl = st.text_input("GL (geo)", value="id")
 
-        st.markdown("---")
-        today=date.today()
-        start_date = st.date_input("Mulai", value=today - timedelta(days=30))
-        end_date   = st.date_input("Selesai", value=today)
+    today=date.today()
+    start_date = st.date_input("Mulai", value=today - timedelta(days=30))
+    end_date   = st.date_input("Selesai", value=today)
 
-        colg1,colg2 = st.columns(2)
-        with colg1:
-            granularity = st.selectbox("Granularitas", ["Monthly","Weekly","Daily"], index=0)
-        with colg2:
-            per_shard_limit = st.number_input("Hasil/shard (≤100)", 1, 100, 50)
+    colg1,colg2 = st.columns(2)
+    with colg1:
+        granularity = st.selectbox("Granularitas", ["Monthly","Weekly","Daily"], index=0)
+    with colg2:
+        per_shard_limit = st.number_input("Hasil/shard (≤100)", 1, 100, 50)
 
-        st.markdown("---")
-        max_calls = st.number_input("Max Request Calls (CSE)", min_value=1, value=300,
-            help="Batas jumlah request call CSE. Estimasi tidak boleh melebihi ini.")
-        target_links = st.number_input("Target jumlah link", min_value=1, value=1000)
+    max_calls   = st.number_input("Max Request Calls (CSE)", min_value=1, value=300,
+                                  help="Batas jumlah request call CSE. Eksekusi diblokir jika estimasi > ini.")
+    target_links = st.number_input("Target jumlah link", min_value=1, value=1000)
 
-        st.markdown("---")
-        extract_articles = st.checkbox("Ekstrak isi artikel (news-fetch)", value=False)
-        max_workers = st.slider("Thread ekstraksi", 1, 16, 8)
+    extract_articles = st.checkbox("Ekstrak isi artikel (news-fetch)", value=False)
+    max_workers = st.slider("Thread ekstraksi", 1, 16, 8)
 
-        st.markdown("---")
-        api_key = st.text_input("CSE API Key", type="password")
-        cx = st.text_input("CSE cx", type="password")
+    api_key = st.text_input("CSE API Key", type="password")
+    cx = st.text_input("CSE cx", type="password")
 
-        # Estimator realtime (untuk setting manual)
-        shards_preview = daterange_chunks(start_date, end_date, granularity)
-        est_calls_manual, est_results_cap_manual = estimate_calls_and_results(len(shards_preview), per_shard_limit) if shards_preview else (0,0)
+    # Estimator realtime
+    shards_preview = daterange_chunks(start_date, end_date, granularity)
+    est_calls_manual, est_results_cap_manual = estimate_calls_and_results(len(shards_preview), per_shard_limit) if shards_preview else (0,0)
 
-        m1,m2,m3 = st.columns(3)
-        m1.metric("Jumlah shard", len(shards_preview))
-        m2.metric("Estimasi request", est_calls_manual)
-        m3.metric("Maks hasil terambil", est_results_cap_manual)
+    m1,m2,m3 = st.columns(3)
+    m1.metric("Jumlah shard", len(shards_preview))
+    m2.metric("Estimasi request", est_calls_manual)
+    m3.metric("Maks hasil terambil", est_results_cap_manual)
 
-        submitted = st.form_submit_button("Jalankan (Manual)")
-        auto_btn  = st.form_submit_button("🚀 Auto Optimize")
+    # Tombol eksekusi
+    submitted = st.button("Jalankan (Manual)")
+    auto_btn  = st.button("🚀 Auto Optimize")
+
+st.markdown("""
+**Tips:** Atur **granularitas** agar efektif. Gunakan **Monthly** dulu (paling hemat request). Jika hasil kurang, turunkan ke **Weekly** atau **Daily**.
+""")
 
 # ========== Eksekusi Manual ==========
 if submitted:
     if not base_query or not api_key or not cx:
         st.error("Isi **kata kunci, API key, dan CX** terlebih dahulu.")
+    elif start_date > end_date:
+        st.error("Tanggal mulai tidak boleh melebihi tanggal selesai.")
     else:
         est_calls, _ = estimate_calls_and_results(len(shards_preview), per_shard_limit)
         if est_calls > max_calls:
@@ -292,6 +295,8 @@ if submitted:
 if auto_btn:
     if not base_query or not api_key or not cx:
         st.error("Isi **kata kunci, API key, dan CX** terlebih dahulu.")
+    elif start_date > end_date:
+        st.error("Tanggal mulai tidak boleh melebihi tanggal selesai.")
     else:
         plan = plan_auto_optimize(start_date, end_date, target_links, max_calls)
         if not plan:
@@ -315,4 +320,3 @@ if not st.session_state.results_df.empty:
     export_buttons(df, st.session_state.filename_prefix)
 else:
     st.info("Atur parameter di sidebar lalu klik **Jalankan (Manual)** atau **🚀 Auto Optimize**.")
-
