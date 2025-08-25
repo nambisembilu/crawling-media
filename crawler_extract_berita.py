@@ -11,7 +11,7 @@ import concurrent.futures as futures
 import requests, pandas as pd, streamlit as st
 from bs4 import BeautifulSoup
 
-APP_TITLE = "Google CSE Link Grabber 🔎 — Split by Date + Max Request Guard + Auto Optimize"
+APP_TITLE = "Media Crawler - ID"
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 # =========================
